@@ -5,7 +5,7 @@ import { SignOutButton } from '../components/sign-out-button'
 import { Alert, Button, Card, Page } from '../components/ui'
 import type { ActionError } from '../../shared/action-result'
 import { landingPathFor } from '../../shared/auth-model'
-import { resendVerificationFn } from '../../server/auth/actions'
+import { getAuthState, resendVerificationFn } from '../../server/auth/actions'
 
 type VerifyEmailSearch = {
   /** Set when the account exists but the email could not be sent. */
@@ -35,6 +35,9 @@ function VerifyEmailPage() {
   const [cooldown, setCooldown] = useState(0)
   const [error, setError] = useState<ActionError | null>(null)
   const [resent, setResent] = useState(false)
+  const [checking, setChecking] = useState(false)
+  /** Set when a check ran and Appwrite still says the address is unconfirmed. */
+  const [stillUnverified, setStillUnverified] = useState(false)
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -42,10 +45,44 @@ function VerifyEmailPage() {
     return () => clearTimeout(timer)
   }, [cooldown])
 
+  /**
+   * Asks Appwrite where this account stands now, because the confirmation
+   * happens elsewhere: in another tab, on a phone, or through the console.
+   *
+   * Re-running the router alone would be enough to let the person through, but
+   * only when something changed — and when nothing has, a button that silently
+   * leaves you on the same page is indistinguishable from a broken one. So the
+   * state is read explicitly and the answer is always shown.
+   */
+  async function recheck() {
+    setChecking(true)
+    setStillUnverified(false)
+    setError(null)
+    try {
+      const state = await getAuthState()
+
+      if (state.status === 'unverified') {
+        setStillUnverified(true)
+        return
+      }
+
+      await router.invalidate()
+      await router.navigate({ to: landingPathFor(state) })
+    } catch {
+      setError({
+        code: 'network_error',
+        message: 'Could not reach the server. Check your connection and try again.',
+      })
+    } finally {
+      setChecking(false)
+    }
+  }
+
   async function resend() {
     setPending(true)
     setError(null)
     setResent(false)
+    setStillUnverified(false)
     try {
       const result = await resendVerificationFn()
 
@@ -103,6 +140,12 @@ function VerifyEmailPage() {
               An email went out recently. You can request another one in {cooldown} seconds.
             </Alert>
           ) : null}
+          {stillUnverified ? (
+            <Alert tone="error" title="Not confirmed yet">
+              Appwrite still has this address down as unconfirmed. Open the link in the email — the
+              most recent one, since each link can only be used once — and then check again.
+            </Alert>
+          ) : null}
           {error ? <Alert tone="error">{error.message}</Alert> : null}
 
           <div className="flex flex-wrap gap-3">
@@ -110,8 +153,7 @@ function VerifyEmailPage() {
               {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend email'}
             </Button>
 
-            {/* Re-runs the root loader, which re-reads the session from Appwrite. */}
-            <Button type="button" variant="secondary" onClick={() => router.invalidate()}>
+            <Button type="button" variant="secondary" onClick={recheck} pending={checking}>
               I have confirmed it
             </Button>
           </div>
