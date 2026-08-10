@@ -12,9 +12,6 @@ type VerifyEmailSearch = {
   sent?: 'failed'
 }
 
-/** Appwrite rate-limits verification emails; the button matches that rather than fighting it. */
-const RESEND_COOLDOWN_SECONDS = 60
-
 export const Route = createFileRoute('/verify-email')({
   validateSearch: (search: Record<string, unknown>): VerifyEmailSearch =>
     search.sent === 'failed' ? { sent: 'failed' } : {},
@@ -51,15 +48,15 @@ function VerifyEmailPage() {
     setResent(false)
     try {
       const result = await resendVerificationFn()
+
       if (result.ok) {
-        setResent(true)
-        setCooldown(RESEND_COOLDOWN_SECONDS)
+        // The wait comes from the server, which is what actually enforces it,
+        // so the countdown can never disagree with the rule.
+        setResent(result.data.sent)
+        setCooldown(result.data.retryAfterSeconds)
       } else {
         setError(result.error)
-        // A rate-limit rejection still means waiting is the right move.
-        if (result.error.code === 'general_rate_limit_exceeded') {
-          setCooldown(RESEND_COOLDOWN_SECONDS)
-        }
+        if (result.error.code === 'general_rate_limit_exceeded') setCooldown(60)
       }
     } finally {
       setPending(false)
@@ -96,6 +93,11 @@ function VerifyEmailPage() {
           )}
 
           {resent ? <Alert tone="success">Verification email sent.</Alert> : null}
+          {!resent && cooldown > 0 && !error ? (
+            <Alert tone="info">
+              An email went out recently. You can request another one in {cooldown} seconds.
+            </Alert>
+          ) : null}
           {error ? <Alert tone="error">{error.message}</Alert> : null}
 
           <div className="flex flex-wrap gap-3">

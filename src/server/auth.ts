@@ -14,7 +14,11 @@
 import { createServerFn } from '@tanstack/react-start'
 import { ID } from 'node-appwrite'
 
-import { profileToPrefs } from '../../shared/hauz-schema'
+import {
+  VERIFICATION_RESEND_INTERVAL_SECONDS,
+  profileToPrefs,
+  secondsUntilResendAllowed,
+} from '../../shared/hauz-schema'
 import type { PersonalProfile, ProvisionResponse } from '../../shared/hauz-schema'
 import { adminClient, sessionClient } from '../lib/appwrite/clients.server'
 import { describeForLog, fail, ok, toActionError } from '../lib/appwrite/errors'
@@ -177,6 +181,7 @@ export const registerFn = createServerFn({ method: 'POST' })
         email: data.email,
         name: `${data.firstName} ${data.lastName}`,
         returnUrl: verificationReturnUrl(),
+        prefs: profileToPrefs(profile),
       })
     } catch (error) {
       verificationSent = false
@@ -217,8 +222,25 @@ export const completeRegistrationFn = createServerFn({
 /* Email verification                                                          */
 /* -------------------------------------------------------------------------- */
 
+export type ResendOutcome = {
+  /** `false` when the interval has not elapsed and nothing was sent. */
+  sent: boolean
+  /** Seconds the caller must wait before asking again. */
+  retryAfterSeconds: number
+}
+
+/**
+ * Sends another verification email, no more often than once per
+ * {@link VERIFICATION_RESEND_INTERVAL_SECONDS}.
+ *
+ * The limit is enforced here rather than only in the page. A countdown in the
+ * browser is a courtesy to the person using it; it stops nobody from calling
+ * this endpoint in a loop, which under the Resend transport would spend quota
+ * and fill somebody's inbox. Being early is not an error — the caller is told
+ * how long is left and the button keeps counting down.
+ */
 export const resendVerificationFn = createServerFn({ method: 'POST' }).handler(
-  async (): Promise<ActionResult<{ sent: true }>> => {
+  async (): Promise<ActionResult<ResendOutcome>> => {
     const sessionSecret = readSessionSecret()
     if (!sessionSecret) {
       return fail({
@@ -228,15 +250,23 @@ export const resendVerificationFn = createServerFn({ method: 'POST' }).handler(
     }
 
     try {
+      // `account.get()` already carries the preferences, so enforcing the
+      // interval costs no extra round trip.
       const user = await sessionClient(sessionSecret).account.get()
+
+      const wait = secondsUntilResendAllowed(user.prefs)
+      if (wait > 0) return ok({ sent: false, retryAfterSeconds: wait })
+
       await sendVerificationEmail({
         sessionSecret,
         userId: user.$id,
         email: user.email,
         name: user.name,
         returnUrl: verificationReturnUrl(),
+        prefs: user.prefs,
       })
-      return ok({ sent: true })
+
+      return ok({ sent: true, retryAfterSeconds: VERIFICATION_RESEND_INTERVAL_SECONDS })
     } catch (error) {
       console.error(`[auth] resend verification failed: ${describeForLog(error)}`)
       return fail(toActionError(error))

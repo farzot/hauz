@@ -312,22 +312,23 @@ difference. It runs first in `npm run verify`.
 
 ## Security model
 
-| Concern                    | How it is handled                                                                                              |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Credentials in the browser | None. No Appwrite SDK, endpoint or key is bundled client-side                                                  |
-| Session theft via XSS      | Session secret in an httpOnly, SameSite=Lax cookie                                                             |
-| Cross-site request forgery | `SameSite=Lax` blocks the cross-site POST; a request-origin check on every mutating request is the second lock |
-| Session lifetime           | Cookie `maxAge` matches Appwrite's session expiry                                                              |
-| Route protection           | `beforeLoad` runs during SSR; a signed-out visitor is redirected before any authenticated HTML is produced     |
-| Identity spoofing          | The Function trusts `x-appwrite-user-id` from the JWT, never the request body                                  |
-| Privilege escalation       | No client role has write permission on any HAUZ table                                                          |
-| Reading others' data       | Row-level permissions; reads use the visitor's own session                                                     |
-| Open redirect              | `?next=` accepts same-origin paths only; the verification `url` must match a registered platform               |
-| User enumeration           | Login returns one message for "no such user" and "wrong password"                                              |
-| Error leakage              | Appwrite exceptions are mapped to fixed messages; details go to the server log                                 |
-| Unhandled failures         | A route that throws renders a recovery page, not a stack trace; the reason is logged server-side               |
-| Input validation           | The same zod schema runs in the browser, in the server function, and again inside the Function                 |
-| Double submit              | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless          |
+| Concern                     | How it is handled                                                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Credentials in the browser  | None. No Appwrite SDK, endpoint or key is bundled client-side                                                              |
+| Session theft via XSS       | Session secret in an httpOnly, SameSite=Lax cookie                                                                         |
+| Cross-site request forgery  | `SameSite=Lax` blocks the cross-site POST; a request-origin check on every mutating request is the second lock             |
+| Verification email flooding | One email per account per 60s, enforced on the server from a timestamp on the Auth user — not by the countdown in the page |
+| Session lifetime            | Cookie `maxAge` matches Appwrite's session expiry                                                                          |
+| Route protection            | `beforeLoad` runs during SSR; a signed-out visitor is redirected before any authenticated HTML is produced                 |
+| Identity spoofing           | The Function trusts `x-appwrite-user-id` from the JWT, never the request body                                              |
+| Privilege escalation        | No client role has write permission on any HAUZ table                                                                      |
+| Reading others' data        | Row-level permissions; reads use the visitor's own session                                                                 |
+| Open redirect               | `?next=` accepts same-origin paths only; the verification `url` must match a registered platform                           |
+| User enumeration            | Login returns one message for "no such user" and "wrong password"                                                          |
+| Error leakage               | Appwrite exceptions are mapped to fixed messages; details go to the server log                                             |
+| Unhandled failures          | A route that throws renders a recovery page, not a stack trace; the reason is logged server-side                           |
+| Input validation            | The same zod schema runs in the browser, in the server function, and again inside the Function                             |
+| Double submit               | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless                      |
 
 The origin check lives in [`src/start.ts`](src/start.ts) and is scoped to methods that change
 state. Applying it to every request would reject ordinary cross-site navigation — including the
@@ -486,8 +487,12 @@ drift, so the two halves of the system provably describe the same schema.
 - **Verification links opened without a session.** Appwrite accepts the `userId`/`secret` pair on
   its own, so this normally works. If a deployment insists on a session, `/verify` tells the person
   to sign in and returns them to the link with its parameters intact.
-- **Resend cooldown is 60 seconds** in the UI, to match Appwrite's own rate limiting rather than
-  fight it. Appwrite remains the authority; a 429 is surfaced as a plain message.
+- **Verification emails are limited to one per account per 60 seconds.** The limit is enforced in
+  `resendVerificationFn` from a timestamp stored on the Auth user, not by the countdown in the
+  page — a countdown in the browser is a courtesy, and stops nobody from calling the endpoint in
+  a loop. Keeping it on the Auth user rather than in memory means it survives a restart and holds
+  across every instance. Appwrite's own rate limiting still applies on top for the `appwrite`
+  transport; a 429 is surfaced as a plain message.
 - **Relationship columns are read as ids, not nested rows.** A read returns
   `account_id: "<uuid>"` unless the query asks for expansion with
   `Query.select(['*', 'account_id.*'])`. The read path requests expansion and still resolves a bare

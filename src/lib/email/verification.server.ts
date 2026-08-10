@@ -18,6 +18,7 @@
  * expiry, single use and validity, and the verification flag is set only once
  * Appwrite has accepted the secret.
  */
+import { USER_PREF_KEYS } from '../../../shared/hauz-schema'
 import { adminClient, sessionClient } from '../appwrite/clients.server'
 import { describeForLog } from '../appwrite/errors'
 import { env } from '../env.server'
@@ -55,14 +56,52 @@ export type SendVerificationArgs = {
   name: string
   /** Absolute URL of the `/verify` route on this deployment. */
   returnUrl: string
+  /**
+   * The Auth user's current preferences. They are rewritten wholesale with the
+   * send timestamp merged in, so they have to be passed rather than guessed.
+   */
+  prefs: Record<string, unknown>
 }
 
+/**
+ * Sends the verification email and records when it went out.
+ *
+ * The timestamp is written only after a successful send, so a failed attempt
+ * can be retried immediately rather than starting a pointless wait.
+ */
 export async function sendVerificationEmail(args: SendVerificationArgs): Promise<void> {
   if (emailTransport() === 'appwrite') {
     await sessionClient(args.sessionSecret).account.createVerification({ url: args.returnUrl })
-    return
+  } else {
+    await sendViaResend(args)
   }
-  await sendViaResend(args)
+
+  await recordSent(args)
+}
+
+/**
+ * Stores the send time on the Auth user.
+ *
+ * Appwrite replaces preferences wholesale, so the existing values are merged
+ * back in: losing the stored profile here would break the recovery path that
+ * `/complete-registration` depends on.
+ *
+ * A failure is logged and swallowed. The email has already gone out, and
+ * refusing the whole request at this point would tell the person that nothing
+ * was sent when something was.
+ */
+async function recordSent(args: SendVerificationArgs): Promise<void> {
+  try {
+    await adminClient().users.updatePrefs({
+      userId: args.userId,
+      prefs: {
+        ...args.prefs,
+        [USER_PREF_KEYS.verificationSentAt]: new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    console.error(`[email] could not record the send time: ${describeForLog(error)}`)
+  }
 }
 
 async function sendViaResend(args: SendVerificationArgs): Promise<void> {

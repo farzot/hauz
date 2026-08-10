@@ -357,9 +357,51 @@ export const USER_PREF_KEYS = {
   lastName: 'hauzLastName',
   role: 'hauzRole',
   contactPhone: 'hauzContactPhone',
+  /**
+   * When the last verification email went out, ISO 8601. Kept on the Auth user
+   * rather than in memory so the limit survives a restart and holds across
+   * every instance of the application, which is the only way it actually
+   * limits anything.
+   */
+  verificationSentAt: 'hauzVerificationSentAt',
 } as const
 
-/** Shape of the preferences written at registration time. */
+/**
+ * Minimum gap between verification emails for one account.
+ *
+ * Shared so the countdown a person sees and the rule the server enforces are
+ * the same number, and cannot drift apart.
+ */
+export const VERIFICATION_RESEND_INTERVAL_SECONDS = 60
+
+/**
+ * Seconds remaining before another verification email may be sent — `0` when
+ * one may be sent now. An unreadable or absent timestamp allows the send: the
+ * limit exists to stop repetition, not to lock people out of registering.
+ */
+export function secondsUntilResendAllowed(prefs: unknown, now: number = Date.now()): number {
+  const raw = (prefs as Record<string, unknown> | null | undefined)?.[
+    USER_PREF_KEYS.verificationSentAt
+  ]
+  if (typeof raw !== 'string') return 0
+
+  const sentAt = new Date(raw).getTime()
+  if (!Number.isFinite(sentAt)) return 0
+
+  const elapsed = (now - sentAt) / 1000
+  // A timestamp in the future means a clock skew somewhere; do not trust it.
+  if (elapsed < 0) return 0
+
+  return Math.max(0, Math.ceil(VERIFICATION_RESEND_INTERVAL_SECONDS - elapsed))
+}
+
+/**
+ * Shape of the preferences written at registration time.
+ *
+ * `verificationSentAt` is deliberately absent: it is bookkeeping, and an
+ * account whose timestamp is missing or malformed must still be able to
+ * recover its profile.
+ */
 export const userPrefsSchema = z.object({
   [USER_PREF_KEYS.firstName]: z.string().trim().min(1).max(100),
   [USER_PREF_KEYS.lastName]: z.string().trim().min(1).max(100),
