@@ -312,21 +312,28 @@ difference. It runs first in `npm run verify`.
 
 ## Security model
 
-| Concern                    | How it is handled                                                                                          |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Credentials in the browser | None. No Appwrite SDK, endpoint or key is bundled client-side                                              |
-| Session theft via XSS      | Session secret in an httpOnly, SameSite=Lax cookie                                                         |
-| Session lifetime           | Cookie `maxAge` matches Appwrite's session expiry                                                          |
-| Route protection           | `beforeLoad` runs during SSR; a signed-out visitor is redirected before any authenticated HTML is produced |
-| Identity spoofing          | The Function trusts `x-appwrite-user-id` from the JWT, never the request body                              |
-| Privilege escalation       | No client role has write permission on any HAUZ table                                                      |
-| Reading others' data       | Row-level permissions; reads use the visitor's own session                                                 |
-| Open redirect              | `?next=` accepts same-origin paths only; the verification `url` must match a registered platform           |
-| User enumeration           | Login returns one message for "no such user" and "wrong password"                                          |
-| Error leakage              | Appwrite exceptions are mapped to fixed messages; details go to the server log                             |
-| Unhandled failures         | A route that throws renders a recovery page, not a stack trace; the reason is logged server-side           |
-| Input validation           | The same zod schema runs in the browser, in the server function, and again inside the Function             |
-| Double submit              | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless      |
+| Concern                    | How it is handled                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Credentials in the browser | None. No Appwrite SDK, endpoint or key is bundled client-side                                                  |
+| Session theft via XSS      | Session secret in an httpOnly, SameSite=Lax cookie                                                             |
+| Cross-site request forgery | `SameSite=Lax` blocks the cross-site POST; a request-origin check on every mutating request is the second lock |
+| Session lifetime           | Cookie `maxAge` matches Appwrite's session expiry                                                              |
+| Route protection           | `beforeLoad` runs during SSR; a signed-out visitor is redirected before any authenticated HTML is produced     |
+| Identity spoofing          | The Function trusts `x-appwrite-user-id` from the JWT, never the request body                                  |
+| Privilege escalation       | No client role has write permission on any HAUZ table                                                          |
+| Reading others' data       | Row-level permissions; reads use the visitor's own session                                                     |
+| Open redirect              | `?next=` accepts same-origin paths only; the verification `url` must match a registered platform               |
+| User enumeration           | Login returns one message for "no such user" and "wrong password"                                              |
+| Error leakage              | Appwrite exceptions are mapped to fixed messages; details go to the server log                                 |
+| Unhandled failures         | A route that throws renders a recovery page, not a stack trace; the reason is logged server-side               |
+| Input validation           | The same zod schema runs in the browser, in the server function, and again inside the Function                 |
+| Double submit              | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless          |
+
+The origin check lives in [`src/start.ts`](src/start.ts) and is scoped to methods that change
+state. Applying it to every request would reject ordinary cross-site navigation — including the
+verification link, which arrives from a mail client as `Sec-Fetch-Site: cross-site` and must open
+normally. Reads are left alone: a cross-origin caller can make `getAuthState` run but cannot read
+its response without a CORS grant, which is not given.
 
 ---
 
