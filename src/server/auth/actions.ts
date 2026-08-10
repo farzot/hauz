@@ -108,8 +108,6 @@ async function sendFirstVerificationEmail(sessionSecret: string): Promise<boolea
     await sendVerificationEmail({
       sessionSecret,
       userId: user.$id,
-      email: user.email,
-      name: user.name,
       returnUrl: verificationReturnUrl(),
       prefs: user.prefs,
     })
@@ -258,8 +256,6 @@ export const registerFn = createServerFn({ method: 'POST' })
       await sendVerificationEmail({
         sessionSecret,
         userId,
-        email: data.email,
-        name: `${data.firstName} ${data.lastName}`,
         returnUrl: verificationReturnUrl(),
         prefs: profileToPrefs(profile),
       })
@@ -363,8 +359,6 @@ export const resendVerificationFn = createServerFn({ method: 'POST' }).handler(
       await sendVerificationEmail({
         sessionSecret,
         userId: user.$id,
-        email: user.email,
-        name: user.name,
         returnUrl: verificationReturnUrl(),
         prefs: user.prefs,
       })
@@ -380,33 +374,39 @@ export const resendVerificationFn = createServerFn({ method: 'POST' }).handler(
 export type VerificationOutcome = Redirection
 
 /**
- * Completes verification from the link in the email, which is often opened in a
- * browser with no session: another device, or a mail client's own viewer.
- * Appwrite accepts the userId/secret pair on its own, so that works; if a
- * deployment insists on a session, the caller is sent to sign in and comes back
- * here with the parameters intact.
+ * Completes verification from the link in the email.
+ *
+ * Opened in the browser that registered — the ordinary case — the session is
+ * right there and this finishes in one request. Opened anywhere else (another
+ * device, a mail client's own viewer) there is no session to act as, and
+ * Appwrite Cloud will not let an API-key caller touch `/account`. That is not an
+ * error, it is one extra step: the person signs in and comes straight back here
+ * with the link's parameters intact.
  */
 export const completeVerificationFn = createServerFn({ method: 'POST' })
   .validator(verificationCallbackSchema)
   .handler(async ({ data }): Promise<ActionResult<VerificationOutcome>> => {
-    let sessionSecret = readSessionSecret()
+    const sessionSecret = readSessionSecret()
 
     try {
-      const result = await confirmVerification({
+      await confirmVerification({
         userId: data.userId,
         secret: data.secret,
-        flow: data.flow,
         sessionSecret,
       })
-
-      // The token flow signs the person in as it verifies, so a link opened on
-      // a second device lands them straight in.
-      if (result.session) {
-        sessionSecret = result.session.secret
-        writeSessionSecret(result.session.secret, result.session.expiresAt)
-      }
     } catch (error) {
-      console.error(`[auth] verification failed: ${describeForLog(error)}`)
+      // A link opened where there is no session is the expected cost of
+      // Appwrite's own verification email, not a fault, so the log says so
+      // rather than crying failure at someone reading their mail on a phone.
+      const needsLogin = !sessionSecret && !isVerificationTokenRejected(error)
+      if (needsLogin) {
+        console.log(
+          `[auth] verification link opened without a session; asking for sign-in ` +
+            `(${describeForLog(error)})`,
+        )
+      } else {
+        console.error(`[auth] verification failed: ${describeForLog(error)}`)
+      }
 
       // A single-use link opened twice fails the second time even though the
       // first worked, so check the account before reporting a failure to
@@ -421,7 +421,7 @@ export const completeVerificationFn = createServerFn({ method: 'POST' })
 
       // No session. Offering to sign in only helps if that was what was
       // missing; a link Appwrite refused outright cannot be revived by it.
-      if (isVerificationTokenRejected(error)) return fail(toActionError(error))
+      if (!needsLogin) return fail(toActionError(error))
 
       return fail({
         code: 'needs_login',

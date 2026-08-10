@@ -8,8 +8,6 @@ import { completeVerificationFn } from '../../server/auth/actions'
 type VerifySearch = {
   userId?: string
   secret?: string
-  /** Present only on links produced by the Resend transport. */
-  flow?: 'token'
 }
 
 /**
@@ -21,7 +19,6 @@ export const Route = createFileRoute('/verify')({
   validateSearch: (search: Record<string, unknown>): VerifySearch => ({
     userId: typeof search.userId === 'string' ? search.userId : undefined,
     secret: typeof search.secret === 'string' ? search.secret : undefined,
-    flow: search.flow === 'token' ? 'token' : undefined,
   }),
 
   component: VerifyPage,
@@ -31,7 +28,7 @@ type Phase = 'working' | 'done' | 'invalid-link' | 'needs-login' | 'error'
 
 function VerifyPage() {
   const router = useRouter()
-  const { userId, secret, flow } = Route.useSearch()
+  const { userId, secret } = Route.useSearch()
 
   const [phase, setPhase] = useState<Phase>(userId && secret ? 'working' : 'invalid-link')
   const [error, setError] = useState<ActionError | null>(null)
@@ -45,9 +42,7 @@ function VerifyPage() {
 
     void (async () => {
       try {
-        const result = await completeVerificationFn({
-          data: { userId, secret, flow: flow ?? 'appwrite' },
-        })
+        const result = await completeVerificationFn({ data: { userId, secret } })
 
         if (result.ok) {
           setPhase('done')
@@ -66,7 +61,7 @@ function VerifyPage() {
         setPhase('error')
       }
     })()
-  }, [flow, router, secret, userId])
+  }, [router, secret, userId])
 
   return (
     <Page>
@@ -99,9 +94,7 @@ function VerifyPage() {
               onClick={() =>
                 router.navigate({
                   to: '/login',
-                  search: {
-                    next: `/verify?userId=${userId}&secret=${secret}${flow ? `&flow=${flow}` : ''}`,
-                  },
+                  search: { next: `/verify?userId=${userId}&secret=${secret}` },
                 })
               }
             >

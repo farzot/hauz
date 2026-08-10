@@ -209,39 +209,18 @@ if (databaseId !== 'hauz') {
 
 console.log('\nEmail verification')
 
-const transport =
-  process.env.EMAIL_TRANSPORT || (process.env.RESEND_API_KEY ? 'resend' : 'appwrite')
-
-if (transport === 'appwrite') {
-  console.log('  · transport "appwrite" — Appwrite sends the verification email over the')
-  console.log("      project SMTP. On Appwrite Cloud's free plan the shared sender is")
-  console.log('      rate-limited and often filtered; set RESEND_API_KEY to use Resend.')
-} else {
-  const from = process.env.EMAIL_FROM
-  if (!process.env.RESEND_API_KEY || !from) {
-    failures += 1
-    console.log('  ✗ transport "resend" — RESEND_API_KEY and EMAIL_FROM must both be set')
-  } else {
-    console.log(`  ✓ transport "resend" — sending as ${from}`)
-
-    await check('Resend API key', async () => {
-      const response = await fetch('https://api.resend.com/domains', {
-        headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-      })
-      if (response.status === 401 || response.status === 403) {
-        throw new Error('rejected by Resend — check the key and its permissions')
-      }
-      if (!response.ok) throw new Error(`Resend returned ${response.status}`)
-
-      const body = (await response.json()) as { data?: Array<{ name: string; status: string }> }
-      const verified = (body.data ?? []).filter((domain) => domain.status === 'verified')
-      if (verified.length > 0) {
-        return `accepted, verified domain(s): ${verified.map((d) => d.name).join(', ')}`
-      }
-      return 'accepted, no verified domain — delivery is limited to your own Resend address'
-    })
-  }
-}
+// Whether SMTP is configured, and whether the app's hostname is a registered Web
+// platform, are project settings this key cannot read: both live behind the
+// console API. So this is a reminder of the two things to check there, not a
+// test of them.
+console.log('  · Appwrite mints, renders and sends the verification email over the project')
+console.log('      SMTP. Two console settings decide whether it arrives:')
+console.log('        Settings → Platforms   a Web platform for this hostname, or Appwrite')
+console.log('                               refuses the verification url outright')
+console.log('        Auth → SMTP            custom SMTP; the shared Cloud sender works but')
+console.log('                               is rate-limited and often filtered as spam')
+console.log('      If a message never arrives, switch "Email verification" on for the user')
+console.log('      in Auth → Users; the app picks that up on the next page load.')
 
 /* -------------------------------------------------------------------------- */
 

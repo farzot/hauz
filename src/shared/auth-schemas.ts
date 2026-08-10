@@ -69,11 +69,6 @@ export type LoginInput = z.input<typeof loginSchema>
 export const verificationCallbackSchema = z.object({
   userId: z.string().min(1),
   secret: z.string().min(1),
-  /**
-   * Which transport produced the link. Appwrite's own emails carry only
-   * `userId` and `secret`, so an absent value means the Appwrite flow.
-   */
-  flow: z.enum(['appwrite', 'token']).default('appwrite'),
 })
 
 /**
