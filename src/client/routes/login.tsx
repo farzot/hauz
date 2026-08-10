@@ -68,7 +68,9 @@ function LoginPage() {
           </>
         }
       >
-        <form onSubmit={form.onSubmit} noValidate className="space-y-5">
+        {/* See register.tsx: `post` keeps a submit made before hydration from
+            putting the password in the URL. */}
+        <form method="post" onSubmit={form.onSubmit} noValidate className="space-y-5">
           {form.error && !form.error.field ? (
             <Alert tone="error" title="Could not sign you in">
               {form.error.message}

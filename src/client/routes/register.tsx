@@ -64,7 +64,11 @@ function RegisterPage() {
           </>
         }
       >
-        <form onSubmit={form.onSubmit} noValidate className="space-y-5">
+        {/* `method="post"` never runs once the page is hydrated, because the
+            handler below preventDefault()s. It matters for the window before
+            that: a default form submit is a GET, which would put the password in
+            the URL, the history and the access log. */}
+        <form method="post" onSubmit={form.onSubmit} noValidate className="space-y-5">
           {form.error && !form.error.field ? (
             <Alert tone="error" title="Registration did not complete">
               {form.error.message}
