@@ -1,0 +1,64 @@
+{
+  "name": "hauz-auth",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite dev --port 3000",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node .output/server/index.mjs",
+    "preflight": "tsx scripts/preflight.ts",
+    "setup:appwrite": "tsx scripts/setup-appwrite.ts",
+    "sync:shared": "tsx scripts/sync-shared.ts",
+    "check:shared": "tsx scripts/sync-shared.ts --check",
+    "build:function": "npm --prefix functions/hauz-account-provisioning run build",
+    "typecheck:function": "npm --prefix functions/hauz-account-provisioning run typecheck",
+    "deploy:function": "npm run sync:shared && appwrite push function",
+    "generate-routes": "tsr generate",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint",
+    "format": "prettier --write . && eslint --fix",
+    "check": "prettier --check .",
+    "verify": "npm run check:schema && npm run check:shared && npm run typecheck && npm run typecheck:function && npm run lint && npm run build",
+    "check:schema": "tsx scripts/check-schema.ts"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/react-devtools": "^0.10.9",
+    "@tanstack/react-router": "^1.170.24",
+    "@tanstack/react-router-devtools": "^1.167.1",
+    "@tanstack/react-start": "^1.168.41",
+    "libphonenumber-js": "^1.13.10",
+    "nitro": "3.0.260610-beta",
+    "node-appwrite": "^27.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.1.18",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tanstack/devtools-vite": "^0.8.3",
+    "@tanstack/eslint-config": "^0.4.0",
+    "@tanstack/router-cli": "^1.132.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "appwrite-cli": "^25.1.0",
+    "dotenv": "^17.4.2",
+    "eslint": "^9.20.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.23.11",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss"
+    ]
+  }
+}

@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HAUZ Authentication ERD - Personal Accounts</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172033;
+        --muted: #5d687b;
+        --line: #cbd5e1;
+        --blue: #1d4ed8;
+        --blue-soft: #eff6ff;
+        --purple: #6d28d9;
+        --purple-soft: #f5f3ff;
+        --green: #047857;
+        --green-soft: #ecfdf5;
+        --amber: #a16207;
+        --amber-soft: #fffbeb;
+        --surface: #ffffff;
+        --page: #f4f7fb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--ink);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+
+      main {
+        width: min(1240px, calc(100% - 32px));
+        margin: 32px auto;
+        padding: clamp(24px, 4vw, 48px);
+        background: var(--surface);
+        border: 1px solid #e2e8f0;
+        border-radius: 20px;
+        box-shadow: 0 18px 50px rgb(15 23 42 / 8%);
+      }
+
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--blue);
+        font-size: 0.75rem;
+        font-weight: 750;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        letter-spacing: -0.035em;
+        line-height: 1.08;
+      }
+
+      .intro {
+        max-width: 780px;
+        margin: 14px 0 28px;
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      .diagram-wrap {
+        overflow-x: auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        background:
+          linear-gradient(#fff 31px, transparent 31px),
+          linear-gradient(90deg, #fff 31px, #edf2f7 31px, #edf2f7 32px, #fff 32px);
+        background-size: 32px 32px;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        min-width: 920px;
+        height: auto;
+      }
+
+      .entity {
+        filter: drop-shadow(0 6px 10px rgb(15 23 42 / 7%));
+      }
+      .entity rect.body {
+        fill: #fff;
+        stroke-width: 2;
+      }
+      .entity rect.header {
+        stroke: none;
+      }
+      .entity text {
+        fill: var(--ink);
+        font-family: inherit;
+      }
+      .entity .name {
+        fill: #fff;
+        font-size: 16px;
+        font-weight: 750;
+      }
+      .entity .field {
+        font-size: 13px;
+      }
+      .entity .type {
+        fill: var(--muted);
+        font-size: 12px;
+      }
+      .entity .divider {
+        stroke: #e2e8f0;
+        stroke-width: 1;
+      }
+      .external rect.body {
+        fill: var(--blue-soft);
+        stroke: var(--blue);
+        stroke-dasharray: 7 5;
+      }
+      .external rect.header {
+        fill: var(--blue);
+      }
+      .grant rect.body {
+        fill: var(--purple-soft);
+        stroke: var(--purple);
+      }
+      .grant rect.header {
+        fill: var(--purple);
+      }
+      .account rect.body {
+        fill: #f8fafc;
+        stroke: #334155;
+      }
+      .account rect.header {
+        fill: #334155;
+      }
+      .personal rect.body {
+        fill: var(--green-soft);
+        stroke: var(--green);
+      }
+      .personal rect.header {
+        fill: var(--green);
+      }
+      .role rect.body {
+        fill: var(--amber-soft);
+        stroke: var(--amber);
+      }
+      .role rect.header {
+        fill: var(--amber);
+      }
+
+      .relation {
+        fill: none;
+        stroke: #64748b;
+        stroke-width: 2;
+      }
+      .relation.current {
+        stroke: var(--purple);
+        stroke-dasharray: 7 5;
+      }
+      .relation-label {
+        fill: #334155;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        paint-order: stroke;
+        stroke: white;
+        stroke-width: 5px;
+        stroke-linejoin: round;
+      }
+      .cardinality {
+        fill: var(--blue);
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        paint-order: stroke;
+        stroke: white;
+        stroke-width: 4px;
+      }
+
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .note {
+        padding: 16px;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .note strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 0.9rem;
+      }
+      .note p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.88rem;
+        line-height: 1.5;
+      }
+
+      code {
+        padding: 0.1em 0.3em;
+        border-radius: 4px;
+        background: #f1f5f9;
+        color: #5b21b6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: 100%;
+          margin: 0;
+          border: 0;
+          border-radius: 0;
+          padding: 20px;
+        }
+        .notes {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Provided data model</p>
+      <h1>HAUZ Authentication ERD</h1>
+      <p class="intro">
+        Personal Account registration only. The Appwrite Auth user is shown to explain the identity
+        link; it is managed by Appwrite and is not a HAUZ table.
+      </p>
+
+      <div
+        class="diagram-wrap"
+        role="img"
+        aria-label="Entity relationship diagram connecting an Appwrite Auth user to account access grants, accounts, personal accounts, and personal roles"
+      >
+        <svg viewBox="0 0 1200 820" xmlns="http://www.w3.org/2000/svg">
+          <path class="relation" d="M290 360 H410" />
+          <text class="relation-label" x="350" y="345" text-anchor="middle">appwrite_user_id</text>
+          <text class="cardinality" x="298" y="381">1</text>
+          <text class="cardinality" x="376" y="381">0..N</text>
+
+          <path class="relation" d="M730 335 C770 335 775 245 820 245" />
+          <text class="relation-label" x="775" y="298" text-anchor="middle">account_id</text>
+          <text class="cardinality" x="734" y="326">0..N</text>
+          <text class="cardinality" x="800" y="237">1</text>
+
+          <path class="relation current" d="M820 145 H650 V230" />
+          <text class="relation-label" x="735" y="130" text-anchor="middle">
+            current_access_grant_id
+          </text>
+          <text class="cardinality" x="794" y="137">0..1</text>
+          <text class="cardinality" x="655" y="218">0..1</text>
+
+          <path class="relation" d="M985 320 V440" />
+          <text class="relation-label" x="1001" y="385">account_id</text>
+          <text class="cardinality" x="965" y="340">1</text>
+          <text class="cardinality" x="965" y="432">1</text>
+
+          <path class="relation" d="M730 690 C775 690 778 605 820 605" />
+          <text class="relation-label" x="778" y="657" text-anchor="middle">role_id</text>
+          <text class="cardinality" x="734" y="681">1</text>
+          <text class="cardinality" x="790" y="597">0..N</text>
+
+          <g class="entity external" transform="translate(30 270)">
+            <rect class="body" width="260" height="180" rx="12" />
+            <rect class="header" width="260" height="46" rx="11" />
+            <rect class="header" y="34" width="260" height="12" />
+            <text class="name" x="18" y="29">APPWRITE_AUTH_USER</text>
+            <text class="field" x="18" y="78">$id</text>
+            <text class="type" x="238" y="78" text-anchor="end">string PK</text>
+            <line class="divider" x1="18" y1="94" x2="242" y2="94" />
+            <text class="field" x="18" y="121">Managed by Appwrite Auth</text>
+            <text class="type" x="18" y="148">External identity - not a HAUZ table</text>
+          </g>
+
+          <g class="entity grant" transform="translate(410 230)">
+            <rect class="body" width="320" height="270" rx="12" />
+            <rect class="header" width="320" height="46" rx="11" />
+            <rect class="header" y="34" width="320" height="12" />
+            <text class="name" x="18" y="29">account_access_grants</text>
+            <text class="field" x="18" y="76">$id</text>
+            <text class="type" x="300" y="76" text-anchor="end">UUID PK</text>
+            <line class="divider" x1="18" y1="91" x2="302" y2="91" />
+            <text class="field" x="18" y="122">appwrite_user_id</text>
+            <text class="type" x="300" y="122" text-anchor="end">varchar(36)</text>
+            <line class="divider" x1="18" y1="137" x2="302" y2="137" />
+            <text class="field" x="18" y="168">account_id</text>
+            <text class="type" x="300" y="168" text-anchor="end">relationship</text>
+            <line class="divider" x1="18" y1="183" x2="302" y2="183" />
+            <text class="field" x="18" y="214">revoked_at</text>
+            <text class="type" x="300" y="214" text-anchor="end">datetime, nullable</text>
+            <text class="type" x="18" y="247">One period of access to one HAUZ Account</text>
+          </g>
+
+          <g class="entity account" transform="translate(820 70)">
+            <rect class="body" width="340" height="250" rx="12" />
+            <rect class="header" width="340" height="46" rx="11" />
+            <rect class="header" y="34" width="340" height="12" />
+            <text class="name" x="18" y="29">accounts</text>
+            <text class="field" x="18" y="76">$id</text>
+            <text class="type" x="320" y="76" text-anchor="end">UUID PK</text>
+            <line class="divider" x1="18" y1="91" x2="322" y2="91" />
+            <text class="field" x="18" y="122">account_type</text>
+            <text class="type" x="320" y="122" text-anchor="end">individual</text>
+            <line class="divider" x1="18" y1="137" x2="322" y2="137" />
+            <text class="field" x="18" y="168">status</text>
+            <text class="type" x="320" y="168" text-anchor="end">active | blocked</text>
+            <line class="divider" x1="18" y1="183" x2="322" y2="183" />
+            <text class="field" x="18" y="214">terminated_at</text>
+            <text class="type" x="320" y="214" text-anchor="end">datetime, nullable</text>
+            <text class="field" x="18" y="239">current_access_grant_id</text>
+            <text class="type" x="320" y="239" text-anchor="end">varchar(36)</text>
+          </g>
+
+          <g class="entity personal" transform="translate(820 440)">
+            <rect class="body" width="340" height="280" rx="12" />
+            <rect class="header" width="340" height="46" rx="11" />
+            <rect class="header" y="34" width="340" height="12" />
+            <text class="name" x="18" y="29">personal_accounts</text>
+            <text class="field" x="18" y="76">$id</text>
+            <text class="type" x="320" y="76" text-anchor="end">UUID PK</text>
+            <line class="divider" x1="18" y1="91" x2="322" y2="91" />
+            <text class="field" x="18" y="122">account_id</text>
+            <text class="type" x="320" y="122" text-anchor="end">relationship, unique</text>
+            <line class="divider" x1="18" y1="137" x2="322" y2="137" />
+            <text class="field" x="18" y="168">role_id</text>
+            <text class="type" x="320" y="168" text-anchor="end">relationship</text>
+            <line class="divider" x1="18" y1="183" x2="322" y2="183" />
+            <text class="field" x="18" y="214">first_name</text>
+            <text class="type" x="320" y="214" text-anchor="end">varchar(100)</text>
+            <text class="field" x="18" y="239">last_name</text>
+            <text class="type" x="320" y="239" text-anchor="end">varchar(100)</text>
+            <text class="field" x="18" y="264">contact_phone</text>
+            <text class="type" x="320" y="264" text-anchor="end">varchar(20), nullable</text>
+          </g>
+
+          <g class="entity role" transform="translate(410 620)">
+            <rect class="body" width="320" height="150" rx="12" />
+            <rect class="header" width="320" height="46" rx="11" />
+            <rect class="header" y="34" width="320" height="12" />
+            <text class="name" x="18" y="29">personal_roles</text>
+            <text class="field" x="18" y="78">$id</text>
+            <text class="type" x="300" y="78" text-anchor="end">UUID PK</text>
+            <line class="divider" x1="18" y1="94" x2="302" y2="94" />
+            <text class="field" x="18" y="125">value</text>
+            <text class="type" x="300" y="125" text-anchor="end">consumer | realtor</text>
+          </g>
+        </svg>
+      </div>
+
+      <section class="notes" aria-label="Relationship explanations">
+        <article class="note">
+          <strong>Identity to account</strong>
+          <p>
+            <code>account_access_grants</code> connects the Appwrite Auth user to each HAUZ Account
+            they may use.
+          </p>
+        </article>
+        <article class="note">
+          <strong>Current access</strong>
+          <p>
+            <code>current_access_grant_id</code> identifies the one unrevoked grant currently
+            allowed to provide access.
+          </p>
+        </article>
+        <article class="note">
+          <strong>Personal Account</strong>
+          <p>
+            Each <code>individual</code> Account has one Personal Account profile and one Personal
+            Role.
+          </p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

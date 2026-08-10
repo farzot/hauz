@@ -1,0 +1,23 @@
+{
+  "$schema": "https://appwrite.io/schemas/appwrite.json",
+  "projectId": "",
+  "projectName": "HAUZ",
+  "functions": [
+    {
+      "$id": "hauz-account-provisioning",
+      "name": "HAUZ account provisioning",
+      "enabled": true,
+      "logging": true,
+      "runtime": "node-22",
+      "entrypoint": "dist/main.js",
+      "commands": "npm install && npm run build",
+      "path": "functions/hauz-account-provisioning",
+      "specification": "s-0.5vcpu-512mb",
+      "timeout": 30,
+      "execute": ["users"],
+      "events": [],
+      "schedule": "",
+      "scopes": ["users.read", "databases.read", "tables.read", "rows.read", "rows.write"]
+    }
+  ]
+}
