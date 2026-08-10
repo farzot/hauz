@@ -2,6 +2,9 @@
   "name": "hauz-auth",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
   "imports": {
     "#/*": "./src/*"
   },
@@ -16,7 +19,7 @@
     "check:shared": "tsx scripts/sync-shared.ts --check",
     "build:function": "npm --prefix functions/hauz-account-provisioning run build",
     "typecheck:function": "npm --prefix functions/hauz-account-provisioning run typecheck",
-    "deploy:function": "npm run sync:shared && node -r dotenv/config node_modules/appwrite-cli/dist/cli.cjs push function",
+    "deploy:function": "npm run sync:shared && node -r dotenv/config node_modules/appwrite-cli/dist/cli.cjs push function --function-id hauz-account-provisioning",
     "generate-routes": "tsr generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
