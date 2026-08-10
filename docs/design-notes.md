@@ -8,7 +8,7 @@ application; this file is the reasoning behind it.
 - [Correctness: partial and duplicate records](#correctness-partial-and-duplicate-records)
 - [The auth state machine](#the-auth-state-machine)
 - [Security model](#security-model)
-- [Email verification delivery](#email-verification-delivery)
+- [Email verification](#email-verification)
 - [Appwrite quirks worth knowing](#appwrite-quirks-worth-knowing)
 - [Project layout](#project-layout)
 - [Scripts](#scripts)
@@ -25,7 +25,7 @@ TanStack Start server functions              ← src/server/auth/actions.ts
    │  validates input, owns the httpOnly session cookie
    │
    ├─ admin client   (API key)   → Appwrite Auth only: create user, open session,
-   │                               mint and exchange verification tokens
+   │                               store the profile on the user
    ├─ session client (session)   → Appwrite Auth: read account, verify email, sign out
    │                             → TablesDB: read the caller's own rows
    └─ JWT client     (user JWT)  → Functions: execute provisioning
@@ -206,7 +206,7 @@ revoked session cannot leave the browser stuck in a signed-in shell.
 | Input validation            | zod at three levels: the browser and the server function share one schema, and the Function validates its own payload again |
 | Double submit               | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless                       |
 
-The origin check lives in [`src/server/start.server.ts`](../src/server/start.server.ts) and is scoped to methods that change
+The origin check lives in [`src/start.ts`](../src/start.ts) and is scoped to methods that change
 state. Applying it to every request would reject ordinary cross-site navigation, including the
 verification link, which arrives from a mail client as `Sec-Fetch-Site: cross-site` and must open
 normally. Reads are left alone: a cross-origin caller can make `getAuthState` run but cannot read its
@@ -214,31 +214,31 @@ response without a CORS grant, which is not given.
 
 ---
 
-## Email verification delivery
+## Email verification
 
-Verification has one outcome, `emailVerification` true on the Appwrite Auth user, set only after
-the person proved they received the message, and two ways to reach it. Configuration decides which
-one runs; no application code differs between them.
+Verification has one outcome — `emailVerification` true on the Appwrite Auth user, set only after the
+person proved they received the message — and it is Appwrite's from end to end:
 
-|                      | `appwrite` (default)                    | `resend`                                                     |
-| -------------------- | --------------------------------------- | ------------------------------------------------------------ |
-| Token minted by      | Appwrite                                | Appwrite (`users.createToken`)                               |
-| Email rendered by    | Appwrite                                | this application                                             |
-| Email delivered by   | the project's SMTP                      | Resend                                                       |
-| Link lifetime        | 7 days                                  | 24 hours                                                     |
-| Token validated by   | Appwrite (`account.updateVerification`) | Appwrite (`account.createSession`)                           |
-| Verified flag set by | Appwrite                                | `users.updateEmailVerification`, after the token is accepted |
+| Step                 | Owner                                                        |
+| -------------------- | ------------------------------------------------------------ |
+| Token minted by      | Appwrite (`account.createEmailVerification`)                 |
+| Email rendered by    | Appwrite                                                     |
+| Email delivered by   | the project's SMTP                                           |
+| Token validated by   | Appwrite (`account.updateEmailVerification`)                 |
+| Verified flag set by | Appwrite                                                     |
+| Resend interval      | this application: a timestamp in the Auth user's preferences |
 
-**The Resend transport does not invent its own token.** It asks Appwrite for one, mails it, and
-later exchanges it. Appwrite therefore stays the authority on expiry, single use and validity:
-there is no hand-rolled crypto and no verification state kept outside Appwrite Auth. Exchanging the
-token also produces a session, so a link opened on a second device signs the person in rather than
-stranding them at a login form.
+This application adds exactly one thing, the timestamp, and it adds it for a reason: a countdown in
+the page stops nobody from calling the endpoint in a loop, and keeping the last-sent time on the Auth
+user rather than in memory makes the limit survive a restart and hold across instances.
 
-Why it exists: Appwrite Cloud's free plan cannot use a custom SMTP server, and its shared sender is
-unreliable. A reviewer connecting a project that _can_ send mail should leave the Resend variables
-empty and get the canonical Appwrite flow. Implementation:
-[`src/server/auth/verification.server.ts`](../src/server/auth/verification.server.ts).
+Nothing else is worth owning here. Rendering our own message and carrying it over a third-party mail
+API was tried and removed: it doubled the verification surface, added two more secrets to configure,
+and bought nothing Appwrite does not already do — expiry, single use, and one place where the verified
+flag lives. Where a project cannot send mail at all, the console can set the flag directly and the app
+picks it up on the next page load, which is a better answer than a second code path.
+
+Implementation: [`src/server/auth/verification.server.ts`](../src/server/auth/verification.server.ts).
 
 ---
 
@@ -266,9 +266,14 @@ unless the query asks for expansion with `Query.select(['*', 'account_id.*'])`. 
 requests expansion and still resolves a bare id if a deployment ignores it, so neither behaviour
 produces a silently empty result.
 
-**Verification links may be opened without a session.** Appwrite accepts the `userId`/`secret` pair
-on its own, so a link opened on another device normally works. If a deployment insists on a session,
-`/verify` tells the person to sign in and returns them to the link with its parameters intact.
+**Verification links get opened where there is no session,** and Appwrite's own link cannot be
+completed there. Every `/account` endpoint is closed to API-key callers on Appwrite Cloud 1.9 —
+confirming a verification with the server key returns `401 general_unauthorized_scope` whatever the
+secret is — so a link opened on another device or inside a mail client's viewer has no user context to
+act on. `/verify` treats that as one extra step rather than a failure: it asks the person to sign in
+and returns them to the link with its parameters intact, and the server log says exactly that instead
+of reporting an error. The attempt is still made first, because a self-hosted deployment may permit it
+and refusing a link that would have worked is worse.
 
 ---
 
@@ -293,19 +298,22 @@ src/
       actions.ts                   the RPC surface: register, login, logout, verify, resume
       session.server.ts            httpOnly session cookie
       state.server.ts              cookie → auth state
-      verification.server.ts       email verification, both transports
+      verification.server.ts       email verification and the resend interval
     appwrite/
       clients.server.ts            admin / session / JWT clients
       errors.server.ts             Appwrite exceptions → messages a person can act on
     env.server.ts                  validated configuration
     hauz.server.ts                 HAUZ reads; delegates writes to the Function
     phone.server.ts                authoritative E.164 validation
-    start.server.ts                request middleware (the origin check)
 
   shared/                          imported by both halves
     action-result.ts               the shape every action returns
     auth-model.ts                  auth state machine
     auth-schemas.ts                zod input schemas, same-origin redirect paths
+
+  start.ts                         the Start instance: request middleware (the
+                                     origin check). Isomorphic on purpose — the
+                                     client reads the same options while hydrating
 ```
 
 The rest of the repository is the other deployable and the tooling around it:
@@ -348,6 +356,14 @@ RPC surface. A page importing `loginFn` is the entire point, and TanStack Start 
 exception mapping that produces it used to live in one module; a component naming the type would
 have pulled the Appwrite SDK toward the browser. Splitting them puts the shape somewhere with no
 dependencies at all and leaves the mapping in `errors.server.ts`, where the build can police it.
+
+The suffix cuts the other way too, which is why [`src/start.ts`](../src/start.ts) sits at the top of
+`src/` rather than beside the request-handling code it configures. The Start instance looks
+server-only — its one job here is a request middleware — but the browser imports it as well:
+`hydrateStart` reads `startInstance.getOptions()` for the serialization adapters. Under a
+`.server.ts` name the client receives a mocked module and hydration throws on that call, which leaves
+SSR working perfectly while no button, form or client navigation in the page does anything. It is a
+boundary worth getting right in the direction nobody checks.
 
 ---
 

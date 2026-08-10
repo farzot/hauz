@@ -22,40 +22,47 @@ npm --prefix functions/hauz-account-provisioning install
 # 2. Configure
 cp .env.example .env
 #    fill in APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_API_KEY
+#    (or export those three in your shell instead — see below, no file needed)
 
-# 3. Check the credentials before anything is created (read-only)
+# 3. In the Appwrite console: Settings -> Platforms -> Add platform -> Web,
+#    hostname `localhost`. Appwrite refuses to send a verification email to a
+#    URL whose hostname is not a registered Web platform.
+
+# 4. Check the credentials before anything is created (read-only)
 npm run preflight
 
-# 4. Create the schema in your Appwrite project
+# 5. Create the schema in your Appwrite project
 #    (database, four tables, every column and index, and the two personal_roles rows)
 npm run setup:appwrite
 
-# 5. Give the Appwrite CLI an endpoint and a key, without an interactive login
+# 6. Give the Appwrite CLI an endpoint and a key, without an interactive login.
+#    The two values have to reach this one command as flags; skip the first
+#    line if you exported them yourself instead of using a .env file.
 set -a; . ./.env; set +a
 npx appwrite client --endpoint "$APPWRITE_ENDPOINT" --key "$APPWRITE_API_KEY"
 
-# 6. Deploy the provisioning Appwrite Function
+# 7. Deploy the provisioning Appwrite Function
 npm run deploy:function
 
-# 7. Only if APPWRITE_DATABASE_ID is not "hauz": tell the function which
+# 8. Only if APPWRITE_DATABASE_ID is not "hauz": tell the function which
 #    database to use. `npm run preflight` checks this for you.
 npx appwrite functions create-variable --function-id hauz-account-provisioning \
     --variable-id dbid --key APPWRITE_DATABASE_ID --value "$APPWRITE_DATABASE_ID"
 
-# 8. Confirm, then run
+# 9. Confirm, then run
 npm run preflight
 npm run dev                              # http://localhost:3000
 ```
 
-Steps 4 and 6 are idempotent and safe to re-run. `npm run preflight` is read-only: it creates nothing,
+Steps 5 and 7 are idempotent and safe to re-run. `npm run preflight` is read-only: it creates nothing,
 reports which setup steps are still outstanding, and prints the command that fixes each one. Run it
 whenever something does not behave.
 
-Step 5 writes the endpoint and key to `~/.appwrite/`, never into the repository. The project id is
+Step 6 writes the endpoint and key to `~/.appwrite/`, never into the repository. The project id is
 deliberately not given to the CLI: `appwrite client --project-id` and `appwrite init project` both
-write it into `appwrite.config.json`, which is committed. `npm run deploy:function` loads `.env`
-instead, and the CLI reads `APPWRITE_PROJECT_ID` from the environment ahead of that file, so
-`projectId` stays `""` in the repository and the push still knows where to go.
+write it into `appwrite.config.json`, which is committed. `npm run deploy:function` reads
+`APPWRITE_PROJECT_ID` from the environment, which the CLI prefers over that file, so `projectId`
+stays `""` in the repository and the push still knows where to go.
 
 > If you ever do run one of those two commands, reset `projectId` to `""` before committing.
 
@@ -68,8 +75,24 @@ Alternatively, deploy the function from the Appwrite console: create a function 
 ## Environment variables
 
 Every project-specific value is read at runtime. Nothing about a particular Appwrite project is
-compiled into the application, so pointing it at a different project means editing `.env` and
+compiled into the application, so pointing it at a different project means changing configuration and
 restarting. No code changes.
+
+**No secret has to live in a file.** Everything is read from `process.env`. A `.env` file is one way
+to populate it, and the only one that is convenient locally, but exporting the variables in your
+shell, your process manager or a secret store works identically:
+
+```bash
+export APPWRITE_ENDPOINT=https://fra.cloud.appwrite.io/v1
+export APPWRITE_PROJECT_ID=…
+export APPWRITE_API_KEY=…
+npm run preflight && npm run dev
+```
+
+`.env` is in `.gitignore` and has never been committed; `.env.example` documents the names and
+carries no values. In development the file is loaded for you if it exists; a production run
+(`npm run build && npm start`) reads the process environment only, so there the variables have to be
+exported — which is what you want of a deployment anyway.
 
 | Variable                            | Required | Default                     | Purpose                                                |
 | ----------------------------------- | -------- | --------------------------- | ------------------------------------------------------ |
@@ -81,9 +104,6 @@ restarting. No code changes.
 | `APPWRITE_PROVISIONING_FUNCTION_ID` | no       | `hauz-account-provisioning` | Function to invoke                                     |
 | `APP_URL`                           | no       | request origin              | Origin for the verification link                       |
 | `SESSION_COOKIE_NAME`               | no       | `hauz_session`              | Cookie holding the session secret                      |
-| `EMAIL_TRANSPORT`                   | no       | auto                        | `appwrite` or `resend`; see below                      |
-| `RESEND_API_KEY`                    | no       | —                           | Required when the transport is `resend`                |
-| `EMAIL_FROM`                        | no       | —                           | Sender, `Name <address@domain>`                        |
 | `HAUZ_PROVISIONING_STRATEGY`        | no       | `auto`                      | Function-side: `auto`, `transaction` or `compensation` |
 
 `APP_URL` is optional because the verification link is built from the origin of the incoming request
@@ -96,11 +116,20 @@ and `rows.*`, and by `npm run preflight` for `functions.read`. They are listed p
 `.env.example`. The Appwrite Function does **not** use this key; it receives a scoped dynamic key
 from Appwrite at execution time.
 
-**Email delivery.** Leave `RESEND_API_KEY` and `EMAIL_FROM` empty to use Appwrite's own verification
-email over your project's SMTP, which is the default and needs no configuration. Fill them in only if
-the project cannot send mail, notably Appwrite Cloud's free plan, where custom SMTP is a Pro feature
-and the shared sender is frequently filtered. Appwrite still mints and validates every token either
-way; Resend only carries the message.
+**Email verification needs no configuration at all.** Only the first three variables in the table are
+required. Appwrite mints the token, renders the message, sends it over the project's SMTP, validates
+the secret when the link comes back and owns the `emailVerification` flag that results; this
+application adds nothing to that but a send timestamp, so the 60-second resend interval can be
+enforced on the server. What decides whether the message arrives lives in the console, not in the
+environment: a Web platform for the hostname, and SMTP under **Auth → SMTP** (Appwrite Cloud's shared
+sender works, but is rate-limited and often filtered as spam).
+
+**Verifying without email.** If the message does not arrive — a filtered shared sender, a throwaway
+address — nothing has to be configured to get past it. Open **Auth → the user → Email verification**
+in the Appwrite console and switch it on. The next page load re-reads the session from Appwrite, sees
+a verified address, and takes the account to the dashboard; `/verify-email` also has an "I have
+confirmed it" button that does the same thing without a reload. The verification flag lives on the
+Appwrite Auth user, so the console is simply the other way to set it.
 
 ---
 
@@ -197,6 +226,11 @@ the interrupted run never sent.
   deleting the Auth user would make a retry with the same email address confusing and is itself racy.
   The state is recoverable, self-healing on next login, and never produces duplicates. It is not a
   partial _HAUZ_ record: the HAUZ side is all-or-nothing.
+- **The table ids are part of the schema, not configuration.** `npm run setup:appwrite` creates
+  `accounts`, `account_access_grants`, `personal_accounts` and `personal_roles` under exactly those
+  ids, inside the database named by `APPWRITE_DATABASE_ID`. If your project already holds these
+  tables under different ids, point `APPWRITE_DATABASE_ID` at a fresh database and let the script
+  build its own; the ids are declared in [`shared/hauz-schema.ts`](shared/hauz-schema.ts).
 - **Row-level security must stay enabled** on `accounts`, `account_access_grants` and
   `personal_accounts`. The setup script enables it and re-applies it on every run. Reads depend on it.
 - **Verification emails are limited to one per account per 60 seconds,** enforced on the server from
@@ -204,9 +238,13 @@ the interrupted run never sent.
 - **`getAuthState` runs on every navigation.** No Appwrite call at all without a session cookie, two
   or three with one, in exchange for a session that is always freshly confirmed rather than cached in
   the browser. A larger application would cache it with a short TTL.
-- **Email delivery is pluggable; verification is not.** The Resend transport exists only because
-  Appwrite Cloud's free plan cannot send reliably. Appwrite still mints and validates every token, and
-  the verified flag lives where it belongs, on the Appwrite Auth user.
+- **Verification is entirely Appwrite's,** including delivery. That keeps expiry, single use and the
+  verified flag in one place instead of splitting them across a mail provider, but it does mean
+  deliverability is your Appwrite project's SMTP setting. If a message does not arrive, the console
+  route below gets past it without any configuration.
+- **A verification link opened where there is no session needs a sign-in first.** Appwrite Cloud
+  closes `/account` to API-key callers, so the secret cannot be exchanged without a user context. The
+  link is not lost: `/verify` sends the person to sign in and returns them to it unchanged.
 
 ---
 
@@ -219,13 +257,14 @@ outstanding and prints the command that fixes each one.
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Every page shows "Something went wrong"            | Appwrite unreachable or the wrong project. The server log names the failure; "Start again" clears the cookie                   |
 | `Invalid url param: URL host must be one of…`      | The app's hostname is not registered as a Web platform in the Appwrite console                                                 |
-| Registration fails with a table not found          | `APPWRITE_DATABASE_ID` is not `hauz` and the function variable was not set (step 7)                                            |
+| Registration fails with a table not found          | `APPWRITE_DATABASE_ID` is not `hauz` and the function variable was not set (step 8)                                            |
 | Function returns `role_not_found`                  | `personal_roles` has not been seeded — run `npm run setup:appwrite`                                                            |
 | Function returns `unauthenticated`                 | The function's _Execute access_ does not include `users`                                                                       |
 | Dashboard says "finish setting up" despite records | The visitor's own session cannot read its rows: row security was switched off on a table. `npm run setup:appwrite` restores it |
-| Verification email never arrives                   | Check the active transport with `npm run preflight`; on `resend` the shared sender only delivers to your own Resend address    |
+| Verification email never arrives                   | See "Verifying without email" below — no configuration needed                                                                  |
 | "Invalid server environment"                       | A variable in `.env` is missing or malformed. The message names each offending key                                             |
 | `project_not_found` in the server log              | `APPWRITE_PROJECT_ID` or `APPWRITE_ENDPOINT` is wrong (Cloud endpoints are region-specific)                                    |
+| The first page after `npm run dev` reloads itself  | Vite optimizing dependencies on a cold cache. Expected once per clone; let it settle before using a form                       |
 
 ---
 
