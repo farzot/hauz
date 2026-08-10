@@ -7,45 +7,30 @@
  *
  * Browser-safe — no Node built-ins, no secrets.
  */
-import parsePhoneNumber from 'libphonenumber-js'
 import { z } from 'zod'
 
 import { E164_PATTERN, PERSONAL_ROLE } from '../../../shared/hauz-schema'
 
+/** Separators people type into a phone field and never mean as digits. */
+const PHONE_SEPARATORS = /[\s()\-.\u00a0]/g
+
+export const PHONE_HELP =
+  'Enter the phone number in international format, for example +998901234567.'
+
 /**
- * Normalises a phone number to E.164, or returns `null` when it is not a real,
- * dialable number. Requires an international prefix: without a country there is
- * nothing to normalise against, and storing an ambiguous number would be worse
- * than rejecting it.
+ * Optional in the form, `null` in the database — never an empty string.
+ *
+ * This checks the *shape* only. Whether the number is one anyone could dial is
+ * decided on the server by `lib/phone.server.ts`, which owns the numbering-plan
+ * metadata and keeps it out of the browser bundle.
  */
-export function toE164(input: string): string | null {
-  const trimmed = input.trim()
-  if (!trimmed.startsWith('+')) return null
-
-  const parsed = parsePhoneNumber(trimmed)
-  if (!parsed || !parsed.isValid()) return null
-
-  const formatted = parsed.number
-  // `contact_phone` is varchar(20); every valid E.164 number fits, but the
-  // column limit is checked rather than assumed.
-  return E164_PATTERN.test(formatted) && formatted.length <= 20 ? formatted : null
-}
-
-const PHONE_HELP = 'Enter the phone number in international format, for example +998901234567.'
-
-/** Optional in the form, `null` in the database — never an empty string. */
 const contactPhoneField = z
   .string()
   .trim()
   .max(32)
   .optional()
-  .transform((value) => (value ? value : null))
-  .superRefine((value, ctx) => {
-    if (value !== null && toE164(value) === null) {
-      ctx.addIssue({ code: 'custom', message: PHONE_HELP })
-    }
-  })
-  .transform((value) => (value === null ? null : toE164(value)))
+  .transform((value) => (value ? value.replace(PHONE_SEPARATORS, '') : null))
+  .refine((value) => value === null || E164_PATTERN.test(value), { message: PHONE_HELP })
 
 const emailField = z
   .string()

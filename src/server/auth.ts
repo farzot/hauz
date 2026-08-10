@@ -28,7 +28,13 @@ import { env } from '../lib/env.server'
 import { provisionHauzAccount } from '../lib/hauz/hauz.server'
 import { landingPathFor } from '../lib/auth/model'
 import type { AppPath, AuthState } from '../lib/auth/model'
-import { loginSchema, registerSchema, verificationCallbackSchema } from '../lib/auth/schemas'
+import {
+  PHONE_HELP,
+  loginSchema,
+  registerSchema,
+  verificationCallbackSchema,
+} from '../lib/auth/schemas'
+import { toE164 } from '../lib/phone.server'
 import {
   clearSessionCookie,
   readSessionSecret,
@@ -111,11 +117,21 @@ export type RegisterOutcome = Redirection & {
 export const registerFn = createServerFn({ method: 'POST' })
   .validator(registerSchema)
   .handler(async ({ data }): Promise<ActionResult<RegisterOutcome>> => {
+    // The browser checked the shape; whether the number is real is decided
+    // here, where the numbering-plan metadata lives.
+    let contactPhone: string | null = null
+    if (data.contactPhone !== null) {
+      contactPhone = toE164(data.contactPhone)
+      if (contactPhone === null) {
+        return fail({ code: 'invalid_phone', field: 'contactPhone', message: PHONE_HELP })
+      }
+    }
+
     const profile: PersonalProfile = {
       firstName: data.firstName,
       lastName: data.lastName,
       role: data.role,
-      contactPhone: data.contactPhone,
+      contactPhone,
     }
 
     const { users, account: adminAccount } = adminClient()

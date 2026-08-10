@@ -461,8 +461,12 @@ drift, so the two halves of the system provably describe the same schema.
 - **Email delivery is pluggable, verification is not.** The Resend transport exists only because
   Appwrite Cloud's free plan cannot send reliably. Appwrite still mints and validates every token,
   and the verified flag lives where it belongs — on the Appwrite Auth user.
-- **Phone numbers must be entered in international format** (`+998901234567`). Validation and
-  normalisation to E.164 use `libphonenumber-js`. Without a country prefix there is nothing to
+- **Phone numbers must be entered in international format** (`+998901234567`). Validation is split:
+  the browser strips separators and checks the E.164 shape, so typos are caught without a round
+  trip, while whether the number is one anyone could dial is settled on the server in
+  [`src/lib/phone.server.ts`](src/lib/phone.server.ts). That keeps roughly 118 KB of
+  numbering-plan metadata — a quarter of the client bundle — out of every page load, and puts the
+  authoritative check where it had to be anyway. Without a country prefix there is nothing to
   normalise against, and storing an ambiguous number seemed worse than rejecting it.
 - **`onDelete: restrict` is not uniform across relationship types.** Appwrite enforces it for the
   many-to-one grant — an account cannot be deleted while a grant points at it — but a one-to-one
