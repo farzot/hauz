@@ -2,6 +2,7 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 
+import { ErrorState } from '../components/error-state'
 import { getAuthState } from '../server/auth'
 import appCss from '../styles.css?url'
 
@@ -30,6 +31,10 @@ export const Route = createRootRoute({
       { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
     ],
   }),
+
+  // Set explicitly as well as on the router: `beforeLoad` above resolves the
+  // session, so this route is the one that fails when Appwrite is unreachable.
+  errorComponent: ErrorState,
 
   shellComponent: RootDocument,
 })

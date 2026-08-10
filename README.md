@@ -324,6 +324,7 @@ difference. It runs first in `npm run verify`.
 | Open redirect              | `?next=` accepts same-origin paths only; the verification `url` must match a registered platform           |
 | User enumeration           | Login returns one message for "no such user" and "wrong password"                                          |
 | Error leakage              | Appwrite exceptions are mapped to fixed messages; details go to the server log                             |
+| Unhandled failures         | A route that throws renders a recovery page, not a stack trace; the reason is logged server-side           |
 | Input validation           | The same zod schema runs in the browser, in the server function, and again inside the Function             |
 | Double submit              | The submit button is disabled while a request is in flight, and provisioning is idempotent regardless      |
 
@@ -491,6 +492,10 @@ drift, so the two halves of the system provably describe the same schema.
 ---
 
 ## Troubleshooting
+
+**Every page shows "Something went wrong"** — the deployment cannot reach Appwrite, or points at the
+wrong project. The server log names the exact failure. "Start again" on that page clears the session
+cookie, which unblocks a browser holding one Appwrite rejects for any reason other than 401.
 
 **Anything at all** — run `npm run preflight` first. It reports which setup steps are still
 outstanding and prints the command that fixes each one.
