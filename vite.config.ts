@@ -25,7 +25,7 @@ const config = defineConfig({
         generatedRouteTree: 'client/routeTree.gen.ts',
         entry: 'client/router.tsx',
       },
-      start: { entry: 'server/start.server.ts' },
+      start: { entry: 'start.ts' },
     }),
     viteReact(),
   ],
