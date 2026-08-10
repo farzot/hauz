@@ -1,16 +1,13 @@
 /**
- * Keeps the Appwrite Function's copy of the shared modules in step with
- * `shared/`.
+ * Mirrors `shared/` into the Appwrite Function.
  *
  *   npm run sync:shared    # write the copies
  *   npm run check:shared   # fail if they have drifted
  *
- * An Appwrite Function is deployed as a self-contained directory: whichever way
- * it is pushed — CLI, console upload, or a Git integration — nothing outside
- * that directory is included. The canonical schema therefore lives in
- * `shared/`, and this script mirrors it into the function so both halves of the
- * system are provably describing the same tables. `check:shared` runs as part
- * of `npm run verify`, so a drifted copy fails the build instead of shipping.
+ * A Function is deployed as a self-contained directory, so nothing outside it
+ * is included however it is pushed. Copying the canonical schema in keeps both
+ * halves of the system describing the same tables, and check:shared runs in
+ * `npm run verify` so a stale copy fails the build instead of shipping.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

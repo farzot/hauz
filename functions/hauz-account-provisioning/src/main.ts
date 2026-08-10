@@ -1,26 +1,14 @@
 /**
- * `hauz-account-provisioning` — Appwrite Function.
- *
  * Creates the HAUZ records for a registered person: one `individual` account,
- * the `account_access_grants` row that connects it to their Appwrite Auth user,
- * and their `personal_accounts` profile.
+ * the `account_access_grants` row connecting it to their Auth user, and their
+ * `personal_accounts` profile. See README.md for the full contract.
  *
- * Invocation
- *   POST, executed with the caller's JWT. Appwrite derives `x-appwrite-user-id`
- *   from that JWT, which is the only source of identity this Function trusts —
- *   a user id in the request body is ignored.
+ * POST, executed with the caller's JWT. Identity comes from the
+ * `x-appwrite-user-id` header Appwrite derives from it; a user id in the body
+ * is ignored. Credentials are the dynamic key in `x-appwrite-key`.
  *
- * Body (optional)
- *   { "profile": { firstName, lastName, role, contactPhone } }
- *   Omit it to re-run provisioning for an account whose registration did not
- *   finish; the profile is then recovered from the Auth user's preferences.
- *
- * Credentials
- *   The dynamic API key in `x-appwrite-key`. Nothing is hard-coded, and the key
- *   is scoped in the Appwrite console rather than stored anywhere.
- *
- * Idempotent: calling it repeatedly for the same user creates one set of
- * records and then reports `created: false`.
+ * Idempotent: repeated calls create one set of records, then report
+ * `created: false`.
  */
 import { Client, TablesDB, Users } from 'node-appwrite'
 
@@ -59,6 +47,7 @@ const STATUS_BY_CODE: Record<Extract<ProvisionResponse, { ok: false }>['code'], 
   unauthenticated: 401,
   invalid_request: 400,
   missing_profile: 422,
+  access_revoked: 403,
   role_not_found: 500,
   provisioning_failed: 500,
 }
@@ -93,7 +82,7 @@ export default async function handler({ req, res, log, error }: AppwriteContext)
     return res.json({ ok: false, code: 'invalid_request', message: 'Use POST.' }, 405)
   }
 
-  // Identity comes from the JWT Appwrite validated, never from the payload.
+  // From the JWT Appwrite validated, never from the payload.
   const appwriteUserId = req.headers['x-appwrite-user-id']
   if (!appwriteUserId) {
     return res.json(
@@ -157,7 +146,7 @@ export default async function handler({ req, res, log, error }: AppwriteContext)
 
     return res.json(result, result.ok ? 200 : STATUS_BY_CODE[result.code])
   } catch (thrown) {
-    // Details go to the function log; the caller gets a stable, non-leaking shape.
+    // Details to the function log; the caller gets a stable shape.
     error(`provisioning failed for ${appwriteUserId}: ${describe(thrown)}`)
     return res.json(
       {

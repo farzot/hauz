@@ -1,13 +1,12 @@
 /**
- * Asserts that `shared/hauz-schema.ts` still describes the schema the
- * assignment supplied — no table, column, index or allowed value added,
- * removed or renamed.
+ * Asserts that shared/hauz-schema.ts still describes the supplied schema: no
+ * table, column, index or allowed value added, removed or renamed.
  *
  *   npm run check:schema
  *
- * The expectation below is transcribed from the brief and the ERD by hand and
- * is deliberately independent of the declaration it checks, so an accidental
- * edit to the schema fails the build rather than reaching a reviewer.
+ * The expectation below was transcribed from the brief by hand and is
+ * deliberately independent of the declaration it checks, so an accidental edit
+ * fails the build instead of reaching a reviewer.
  */
 import process from 'node:process'
 
@@ -15,13 +14,9 @@ import { ACCOUNT_STATUS, ACCOUNT_TYPE, HAUZ_SCHEMA, PERSONAL_ROLE } from '../sha
 
 type TableExpectation = { columns: string[]; indexes: string[] }
 
-/**
- * As printed in docs/hauz-backend-interview-task.pdf, pages 3–4.
- *
- * Typed as a plain record rather than inferred from the literal, so that a
- * table added to the declaration is reported by this check instead of being
- * silently accepted as an exact key.
- */
+// As printed in docs/hauz-backend-interview-task.pdf, pages 3-4. Typed as a
+// plain record, not inferred, so a table added to the declaration is reported
+// instead of silently accepted.
 const EXPECTED: Record<string, TableExpectation> = {
   accounts: {
     columns: ['account_type', 'status', 'terminated_at', 'current_access_grant_id'],

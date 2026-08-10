@@ -1,22 +1,14 @@
 /**
- * Provisions the HAUZ Authentication schema into an Appwrite project.
+ * Creates the HAUZ schema in an Appwrite project: the database, the four tables
+ * and their permissions, every column and index, and the two `personal_roles`
+ * rows the assignment treats as existing data.
  *
  *   npm run setup:appwrite
  *
- * The script is idempotent: it can be run against an empty project, or re-run
- * against a partially provisioned one, and converges on the same state. It
- * creates nothing that is not in the supplied schema.
- *
- * What it does
- *   1. creates the database
- *   2. creates the four tables with their permission model
- *   3. creates every column, waiting for Appwrite to finish building each one
- *   4. creates every index, waiting for it to become available
- *   5. seeds the two `personal_roles` rows, which the assignment treats as
- *      pre-existing data
- *
- * Requires an API key with the `databases.*`, `tables.*`, `collections.*` and
- * `documents.*` (or `rows.*`) scopes.
+ * Idempotent: run it against an empty project or a half-built one and it
+ * converges on the same state. It creates nothing outside the supplied schema.
+ * Needs an API key with the databases/tables/columns/indexes/rows scopes listed
+ * in .env.example.
  */
 import { randomUUID } from 'node:crypto'
 import process from 'node:process'
@@ -65,14 +57,10 @@ const tablesDB = new TablesDB(client)
 /* -------------------------------------------------------------------------- */
 
 /**
- * No table grants write access to any client role. Every HAUZ row is written by
- * the `hauz-account-provisioning` Appwrite Function using a server API key.
- *
- * Reads are user-scoped instead:
- *   - the three user-owned tables enable row-level security and the Function
- *     stamps each row with `read("user:<id>")`, so a signed-in person can read
- *     their own records and nobody else's;
- *   - `personal_roles` is shared reference data, readable by any signed-in user.
+ * No table grants write access to any client role; every row is written by the
+ * provisioning Function. Reads are user-scoped instead: the three user-owned
+ * tables use row security and the Function stamps each row with
+ * `read("user:<id>")`, while `personal_roles` is readable by any signed-in user.
  */
 const TABLE_PERMISSIONS: Record<string, string[]> = {
   [TABLE.accounts]: [],
@@ -111,9 +99,8 @@ function step(message: string) {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Appwrite builds columns and indexes asynchronously. Creating an index over a
- * column that is still `processing` fails, so every create is followed by a
- * poll until the resource reports `available`.
+ * Appwrite builds columns and indexes asynchronously, and an index over a
+ * column still `processing` fails, so every create polls until it is available.
  */
 async function waitUntilAvailable(
   label: string,
@@ -159,7 +146,7 @@ async function ensureTable(table: TableDef): Promise<void> {
   const permissions = TABLE_PERMISSIONS[table.id] ?? []
   try {
     await tablesDB.getTable({ databaseId, tableId: table.id })
-    // Re-apply the permission model so a re-run repairs console edits.
+    // Re-applied so a re-run repairs edits made in the console.
     await tablesDB.updateTable({
       databaseId,
       tableId: table.id,
@@ -199,9 +186,9 @@ const RELATIONSHIP_TYPES = {
 async function createColumn(tableId: string, column: ColumnDef): Promise<void> {
   switch (column.kind) {
     case 'string':
-      // `createTextColumn` is the newer API but has no `size` parameter, so it
-      // cannot express the varchar(20/36/100) limits the schema specifies.
-      await tablesDB.createStringColumn({
+      // The schema specifies varchar(20/36/100) and this is the API that takes
+      // a size; createTextColumn has none.
+      await tablesDB.createVarcharColumn({
         databaseId,
         tableId,
         key: column.key,
@@ -310,9 +297,8 @@ async function ensureIndex(table: TableDef, index: IndexDef): Promise<void> {
     step(`index ${table.id}.${index.key}: created`)
   } catch (error) {
     // Some Appwrite versions refuse to index relationship columns. The index is
-    // part of the supplied schema, so it is always attempted; when the platform
-    // rejects it the run continues and the limitation is reported at the end
-    // rather than silently dropped.
+    // part of the supplied schema, so it is always attempted; a rejection is
+    // reported at the end rather than silently dropped.
     const usesRelationship = index.columns.some((columnKey) =>
       table.columns.some((column) => column.key === columnKey && column.kind === 'relationship'),
     )
@@ -378,8 +364,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Indexes run in a second pass so that every column in the database is
-  // available before any index references it.
+  // Second pass, so every column exists before an index references it.
   for (const table of HAUZ_SCHEMA) {
     if (table.indexes.length === 0) continue
     console.log(`\nIndexes for "${table.id}"`)

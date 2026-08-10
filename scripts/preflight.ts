@@ -1,10 +1,10 @@
 /**
- * Checks that `.env` points at a usable Appwrite project.
+ * Checks that `.env` points at a usable Appwrite project. Read-only: it creates
+ * and changes nothing.
  *
  *   npm run preflight
  *
- * Read-only: it creates and changes nothing. Run it before
- * `npm run setup:appwrite` to separate a configuration problem from a
+ * Run it before setup:appwrite to separate a configuration problem from a
  * provisioning one, and after deploying the function to confirm the pieces can
  * see each other.
  */
@@ -40,7 +40,7 @@ const apiKey = process.env.APPWRITE_API_KEY!
 const databaseId = process.env.APPWRITE_DATABASE_ID || 'hauz'
 const functionId = process.env.APPWRITE_PROVISIONING_FUNCTION_ID || 'hauz-account-provisioning'
 
-/** Enough of the key to recognise it, never enough to use it. */
+/** Enough to recognise the key, never enough to use it. */
 const maskedKey = `${apiKey.slice(0, 6)}…${apiKey.slice(-4)} (${apiKey.length} chars)`
 
 console.log('\nConfiguration')
@@ -72,7 +72,7 @@ async function check(label: string, run: () => Promise<string>): Promise<void> {
   }
 }
 
-/** A missing piece that a later setup step is expected to create. */
+/** Something a later setup step is expected to create. */
 async function checkOptional(label: string, run: () => Promise<string>, hint: string) {
   try {
     console.log(`  ✓ ${label} — ${await run()}`)
@@ -113,8 +113,8 @@ for (const table of HAUZ_SCHEMA) {
     const columns = await tablesDB.listColumns({ databaseId, tableId: table.id })
     const indexes = await tablesDB.listIndexes({ databaseId, tableId: table.id })
 
-    // Appwrite refuses to index relationship columns, so those indexes are
-    // reported as a known platform limitation rather than as missing work.
+    // Indexes on relationship columns are a platform limitation, not missing
+    // work, so they are counted separately.
     const relationshipColumns = new Set(
       table.columns.filter((column) => column.kind === 'relationship').map((column) => column.key),
     )
@@ -185,14 +185,12 @@ await checkOptional(
     }
     return `runtime ${fn.runtime}, execute ${JSON.stringify(fn.execute)}`
   },
-  'deploy it with `npm run deploy:function` (see README)',
+  'deploy it with `npm run deploy:function` (see README). A 401 above means the ' +
+    'function may well be deployed and the API key is simply missing functions.read',
 )
 
-/**
- * The function reads the database id from its own environment and falls back to
- * `hauz`. When the database is named anything else, forgetting this variable
- * produces a confusing "table not found" at registration time rather than here.
- */
+// The function falls back to a database called `hauz`, so with any other name
+// a forgotten variable shows up as "table not found" at registration time.
 if (databaseId !== 'hauz') {
   await checkOptional(
     'function variable APPWRITE_DATABASE_ID',

@@ -10,7 +10,7 @@ export default [
       '.output/**',
       '.nitro/**',
       'dist/**',
-      'src/routeTree.gen.ts',
+      'src/client/routeTree.gen.ts',
       // Built output and generated copies of shared/ — checked at their source.
       'functions/**/dist/**',
       'functions/**/src/shared/**',

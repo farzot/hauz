@@ -1,18 +1,13 @@
 /**
- * Canonical, machine-readable definition of the HAUZ Authentication schema
- * (Personal Accounts subset) exactly as supplied in the assignment.
+ * The HAUZ Authentication schema exactly as supplied, in one machine-readable
+ * place. Used by scripts/setup-appwrite.ts to create it, by the provisioning
+ * Function to write rows, and by the app to read them.
  *
- * This module is the single source of truth for:
- *   - `scripts/setup-appwrite.ts`  — provisions the schema into an Appwrite project
- *   - `functions/hauz-account-provisioning` — the only writer of HAUZ rows
- *   - `src/**` — the TanStack Start application (reads only)
+ * The assignment states the schema is final, so nothing here may be added,
+ * removed or renamed. Keeping it declarative makes that auditable at a glance.
  *
- * The assignment states the schema is final: nothing here may be added,
- * removed, renamed or otherwise changed. Keeping it declarative in one file
- * makes that constraint auditable at a glance.
- *
- * It intentionally depends on nothing but `zod` so it can be copied verbatim
- * into the Appwrite Function bundle (see `scripts/sync-function-shared.ts`).
+ * Depends on nothing but zod, so it can be copied verbatim into the Function
+ * bundle (see scripts/sync-shared.ts).
  */
 import { z } from 'zod'
 
@@ -82,10 +77,8 @@ export type IndexDef = {
 export type TableDef = {
   id: TableId
   name: string
-  /**
-   * Row-level security. Enabled for user-owned tables so a row can grant read
-   * access to exactly one Appwrite Auth user; disabled for shared reference data.
-   */
+  /** On for user-owned tables, so a row grants read access to one Auth user;
+   * off for shared reference data. */
   rowSecurity: boolean
   columns: readonly ColumnDef[]
   indexes: readonly IndexDef[]
@@ -95,10 +88,8 @@ export type TableDef = {
 /* The schema                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Declared in dependency order: `accounts` and `personal_roles` must exist
- * before the tables that hold relationship columns pointing at them.
- */
+// Dependency order: accounts and personal_roles must exist before the tables
+// whose relationship columns point at them.
 export const HAUZ_SCHEMA: readonly TableDef[] = [
   {
     id: TABLE.accounts,
@@ -113,8 +104,8 @@ export const HAUZ_SCHEMA: readonly TableDef[] = [
       },
       { key: 'status', kind: 'enum', elements: ACCOUNT_STATUS, required: true },
       { key: 'terminated_at', kind: 'datetime', required: false },
-      // varchar(36) holding an `account_access_grants.$id`. Deliberately a plain
-      // string column, not an Appwrite relationship — see the assignment.
+      // varchar(36) holding an account_access_grants.$id. A plain string
+      // column, not a relationship, as the assignment specifies.
       {
         key: 'current_access_grant_id',
         kind: 'string',
@@ -138,7 +129,7 @@ export const HAUZ_SCHEMA: readonly TableDef[] = [
   {
     id: TABLE.personalRoles,
     name: 'Personal roles',
-    // Reference data: readable by every signed-in user, writable by no client.
+    // Reference data: readable by any signed-in user, writable by no client.
     rowSecurity: false,
     columns: [{ key: 'value', kind: 'enum', elements: PERSONAL_ROLE, required: true }],
     indexes: [{ key: 'uq_personal_roles_value', type: 'unique', columns: ['value'] }],
@@ -186,7 +177,7 @@ export const HAUZ_SCHEMA: readonly TableDef[] = [
         key: 'account_id',
         kind: 'relationship',
         relatedTable: TABLE.accounts,
-        // One-to-one already enforces the uniqueness that `uq_personal_account` declares.
+        // One-to-one already enforces what uq_personal_account declares.
         type: 'oneToOne',
         twoWay: false,
         onDelete: 'restrict',
@@ -219,11 +210,8 @@ export const HAUZ_SCHEMA: readonly TableDef[] = [
 /* Row shapes                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Appwrite system columns present on every row. Structurally identical to
- * `Models.Row` in the SDK, restated here so this module keeps its only
- * dependency on zod and stays usable from the browser.
- */
+/** Appwrite's system columns. Restated rather than imported so this module
+ * keeps zod as its only dependency. */
 export type RowMeta = {
   $id: string
   $sequence: string
@@ -242,12 +230,9 @@ export type AccountRow = RowMeta & {
 }
 
 /**
- * A relationship column as Appwrite actually returns it.
- *
- * By default a read yields the related row's id as a plain string. It is
- * expanded into the row itself only when the query asks for it — for example
- * `Query.select(['*', 'account_id.*'])`. Both shapes are modelled here so that
- * reading code cannot quietly assume the wrong one; use `relatedId` to narrow.
+ * A relationship as Appwrite returns it: the related row's id by default, the
+ * row itself when the query asked for expansion. Both shapes are modelled so
+ * reading code cannot quietly assume the wrong one.
  */
 export type Related<TRow> = TRow | string | null
 
@@ -279,20 +264,13 @@ export function relatedId(value: Related<RowMeta>): string | null {
 /* Validation                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * E.164: a leading `+`, a non-zero country code digit, then up to 14 more
- * digits. `personal_accounts.contact_phone` is varchar(20), so the 16-character
- * maximum of E.164 always fits.
- */
+/** E.164: a `+`, a non-zero country digit, then up to 14 more. The 16-character
+ * maximum fits contact_phone's varchar(20). */
 export const E164_PATTERN = /^\+[1-9]\d{7,14}$/
 
 /**
- * The profile data required to materialise a Personal Account.
- *
- * Validated twice on purpose: once at the application edge (where it is also
- * normalised) and once inside the Appwrite Function, which must never trust its
- * caller. `contactPhone` is `null` — not `''` — when absent, because
- * `contact_phone` is a nullable column.
+ * Validated twice on purpose: at the application edge, where it is normalised,
+ * and again inside the Function, which must not trust its caller.
  */
 export const personalProfileSchema = z.object({
   firstName: z.string().trim().min(1).max(100),
@@ -308,16 +286,9 @@ export type PersonalProfile = z.infer<typeof personalProfileSchema>
 /* -------------------------------------------------------------------------- */
 
 /**
- * Request body of the provisioning Function.
- *
- * `profile` is optional: on the initial registration the application supplies
- * it, while a retry (for example after a partial failure, or the first login of
- * an account whose provisioning never completed) omits it and lets the Function
- * recover the values from the Appwrite Auth user's preferences.
- *
- * The Appwrite Auth user id is never part of this payload — the Function reads
- * it from the `x-appwrite-user-id` header that Appwrite derives from the
- * caller's JWT.
+ * `profile` is optional: registration supplies it, a retry omits it and lets the
+ * Function recover it from the Auth user's preferences. The user id is never in
+ * this payload; the Function takes it from the JWT.
  */
 export const provisionRequestSchema = z.object({
   profile: personalProfileSchema.optional(),
@@ -340,6 +311,8 @@ export type ProvisionError = {
     | 'unauthenticated'
     | 'invalid_request'
     | 'missing_profile'
+    /** The Account exists, but the grant that led to it has been revoked. */
+    | 'access_revoked'
     | 'role_not_found'
     | 'provisioning_failed'
   message: string
@@ -347,61 +320,56 @@ export type ProvisionError = {
 
 export type ProvisionResponse = ProvisionResult | ProvisionError
 
-/**
- * Keys used on the Appwrite Auth user's preferences. Registration stores the
- * profile there so that provisioning can be resumed later without asking the
- * person to type everything again.
- */
+/** Registration stores the profile here so provisioning can be resumed later
+ * without asking the person to type it again. */
 export const USER_PREF_KEYS = {
   firstName: 'hauzFirstName',
   lastName: 'hauzLastName',
   role: 'hauzRole',
   contactPhone: 'hauzContactPhone',
-  /**
-   * When the last verification email went out, ISO 8601. Kept on the Auth user
-   * rather than in memory so the limit survives a restart and holds across
-   * every instance of the application, which is the only way it actually
-   * limits anything.
-   */
+  /** When the last verification email went out. On the Auth user rather than in
+   * memory, so the limit survives a restart and holds across instances. */
   verificationSentAt: 'hauzVerificationSentAt',
 } as const
 
-/**
- * Minimum gap between verification emails for one account.
- *
- * Shared so the countdown a person sees and the rule the server enforces are
- * the same number, and cannot drift apart.
- */
+/** Shared, so the countdown a person sees and the rule the server enforces
+ * cannot drift apart. */
 export const VERIFICATION_RESEND_INTERVAL_SECONDS = 60
 
-/**
- * Seconds remaining before another verification email may be sent — `0` when
- * one may be sent now. An unreadable or absent timestamp allows the send: the
- * limit exists to stop repetition, not to lock people out of registering.
- */
-export function secondsUntilResendAllowed(prefs: unknown, now: number = Date.now()): number {
+function readVerificationSentAt(prefs: unknown): string | null {
   const raw = (prefs as Record<string, unknown> | null | undefined)?.[
     USER_PREF_KEYS.verificationSentAt
   ]
-  if (typeof raw !== 'string') return 0
+  return typeof raw === 'string' && raw !== '' ? raw : null
+}
+
+/** Distinguishes "waiting for a message" from "waiting for one nobody sent",
+ * which is where a registration that stopped early leaves an account. */
+export function verificationEverSent(prefs: unknown): boolean {
+  return readVerificationSentAt(prefs) !== null
+}
+
+/**
+ * Seconds before another email may be sent, `0` if now. A missing or unreadable
+ * timestamp allows the send: the limit exists to stop repetition, not to lock
+ * anyone out of registering.
+ */
+export function secondsUntilResendAllowed(prefs: unknown, now: number = Date.now()): number {
+  const raw = readVerificationSentAt(prefs)
+  if (raw === null) return 0
 
   const sentAt = new Date(raw).getTime()
   if (!Number.isFinite(sentAt)) return 0
 
   const elapsed = (now - sentAt) / 1000
-  // A timestamp in the future means a clock skew somewhere; do not trust it.
+  // A timestamp in the future means clock skew; do not trust it.
   if (elapsed < 0) return 0
 
   return Math.max(0, Math.ceil(VERIFICATION_RESEND_INTERVAL_SECONDS - elapsed))
 }
 
-/**
- * Shape of the preferences written at registration time.
- *
- * `verificationSentAt` is deliberately absent: it is bookkeeping, and an
- * account whose timestamp is missing or malformed must still be able to
- * recover its profile.
- */
+/** `verificationSentAt` is deliberately absent: it is bookkeeping, and a
+ * missing one must not stop an account recovering its profile. */
 export const userPrefsSchema = z.object({
   [USER_PREF_KEYS.firstName]: z.string().trim().min(1).max(100),
   [USER_PREF_KEYS.lastName]: z.string().trim().min(1).max(100),
@@ -418,7 +386,7 @@ export function profileToPrefs(profile: PersonalProfile) {
   }
 }
 
-/** Returns the profile stored on an Auth user, or `null` when it is absent/invalid. */
+/** The profile stored on an Auth user, or `null` if absent or invalid. */
 export function prefsToProfile(prefs: unknown): PersonalProfile | null {
   const parsed = userPrefsSchema.safeParse(prefs)
   if (!parsed.success) return null

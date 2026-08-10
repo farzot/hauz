@@ -1,11 +1,6 @@
-/**
- * Creation of the HAUZ records that back one Personal Account.
- *
- * This is the only code in the system that writes to the HAUZ tables. It runs
- * inside an Appwrite Function so that no browser — and no part of the web
- * application — ever holds credentials able to create an account, issue an
- * access grant, or choose an account status.
- */
+// The only code in the system that writes to the HAUZ tables. It runs inside an
+// Appwrite Function so that nothing else, browser or web app, ever holds
+// credentials able to create an account, issue a grant or set a status.
 import { AppwriteException, Permission, Query, Role } from 'node-appwrite'
 import type { TablesDB, Users } from 'node-appwrite'
 
@@ -13,9 +8,11 @@ import { registrationRowIds } from './shared/hauz-ids.js'
 import { TABLE, prefsToProfile, relatedId } from './shared/hauz-schema.js'
 import type {
   AccountAccessGrantRow,
+  PersonalAccountRow,
   PersonalProfile,
   PersonalRoleRow,
   ProvisionResponse,
+  ProvisionResult,
 } from './shared/hauz-schema.js'
 
 export type Logger = {
@@ -33,7 +30,7 @@ export type ProvisionInput = {
   logger: Logger
 }
 
-/** Transaction lifetime. Generous enough for three writes, short enough to expire cheaply. */
+/** Long enough for three writes, short enough to expire cheaply. */
 const TRANSACTION_TTL_SECONDS = 60
 
 /* -------------------------------------------------------------------------- */
@@ -44,24 +41,43 @@ export async function provisionPersonalAccount(input: ProvisionInput): Promise<P
   const { tablesDB, databaseId, appwriteUserId, logger } = input
   const ids = registrationRowIds(appwriteUserId)
 
-  // 1. Already provisioned? An unrevoked grant is the authoritative marker: the
-  //    three rows are written atomically, so the grant existing means all of
-  //    them exist.
-  const existing = await findActiveGrant(tablesDB, databaseId, appwriteUserId)
-  if (existing) {
-    logger.log(`user ${appwriteUserId} is already provisioned (grant ${existing.$id})`)
-    return {
-      ok: true,
-      created: false,
-      accountId: relatedId(existing.account_id) ?? ids.accountId,
-      grantId: existing.$id,
-      personalAccountId: ids.personalAccountId,
-    }
+  // 1. "Provisioned" has to mean the same thing here as it does to the app
+  //    reading these tables back, or the two disagree forever: this reports
+  //    success while the app still sees an unfinished registration.
+  const existing = await readExisting(tablesDB, databaseId, appwriteUserId)
+  const alreadyDone = completedFrom(existing, ids)
+  if (alreadyDone) {
+    logger.log(`user ${appwriteUserId} is already provisioned (grant ${alreadyDone.grantId})`)
+    return alreadyDone
   }
 
-  // 2. Resolve the profile, falling back to what registration stored on the
-  //    Auth user so an interrupted registration can be resumed without asking
-  //    the person to re-enter anything.
+  // A grant with no profile behind it is a half-finished earlier run, the one
+  // thing the compensating cleanup can leave when it cannot delete what it
+  // wrote. Row ids are derived from the user id, so the rows this run would
+  // write are exactly the missing ones and the write below fills the gap.
+  const repairing = existing.grant !== null
+  if (repairing && existing.grant!.$id !== ids.grantId) {
+    logger.error(
+      `user ${appwriteUserId}: active grant ${existing.grant!.$id} was not created by this ` +
+        'function and has no personal_accounts row behind it',
+    )
+    return {
+      ok: false,
+      code: 'provisioning_failed',
+      message:
+        'This account has an access grant with no Personal Account behind it. ' +
+        'It was not created here, so it has to be resolved by hand.',
+    }
+  }
+  if (repairing) {
+    logger.error(
+      `user ${appwriteUserId}: grant ${existing.grant!.$id} has no personal_accounts row; ` +
+        'completing the records an earlier run left unfinished',
+    )
+  }
+
+  // 2. Fall back to what registration stored on the Auth user, so an
+  //    interrupted run resumes without asking for anything again.
   const profile = input.profile ?? (await recoverProfile(input))
   if (!profile) {
     return {
@@ -72,7 +88,7 @@ export async function provisionPersonalAccount(input: ProvisionInput): Promise<P
     }
   }
 
-  // 3. Personal Roles are existing data — look the row up, never create it.
+  // 3. Personal Roles are existing data: look the row up, never create it.
   const roleId = await findRoleId(tablesDB, databaseId, profile.role)
   if (!roleId) {
     return {
@@ -88,21 +104,24 @@ export async function provisionPersonalAccount(input: ProvisionInput): Promise<P
   const rows = buildRows({ appwriteUserId, profile, roleId, ids })
 
   try {
-    await writeRows(input, rows)
+    await (repairing ? fillMissingRows(input, rows) : writeRows(input, rows))
   } catch (error) {
-    // A primary-key conflict means a concurrent request for the same Auth user
-    // won the race. That is a success for the caller: exactly one set of
-    // records exists, which is the guarantee we are after.
+    // A primary-key conflict means a concurrent request won the race, which is
+    // a success for the caller: exactly one set of records exists.
     if (isConflict(error)) {
       logger.log(`concurrent provisioning detected for user ${appwriteUserId}; using the winner`)
-      const winner = await waitForGrant(tablesDB, databaseId, appwriteUserId)
-      if (winner) {
+      const winner = await waitForCompletion(tablesDB, databaseId, appwriteUserId, ids)
+      if (winner) return winner
+
+      // Nothing raced us and the rows are already there, so the grant to that
+      // Account was revoked. Writing a fresh one would undo an operator's
+      // decision, so report the state instead of looping on it forever.
+      if (await hasRevokedGrant(tablesDB, databaseId, appwriteUserId)) {
+        logger.log(`user ${appwriteUserId} has only revoked grants; refusing to re-grant access`)
         return {
-          ok: true,
-          created: false,
-          accountId: relatedId(winner.account_id) ?? ids.accountId,
-          grantId: winner.$id,
-          personalAccountId: ids.personalAccountId,
+          ok: false,
+          code: 'access_revoked',
+          message: 'Access to this HAUZ Account has been revoked.',
         }
       }
     }
@@ -138,11 +157,8 @@ function buildRows(args: {
 }): RowPlan[] {
   const { appwriteUserId, profile, roleId, ids } = args
 
-  /**
-   * A person may read the records that describe them, and nothing else. No
-   * client role is granted create, update or delete anywhere: every write goes
-   * through this Function.
-   */
+  // A person may read the records that describe them and nothing else. No
+  // client role gets create, update or delete anywhere.
   const readableByOwner = [Permission.read(Role.user(appwriteUserId))]
 
   return [
@@ -153,10 +169,9 @@ function buildRows(args: {
         account_type: 'individual',
         status: 'active',
         terminated_at: null,
-        // `current_access_grant_id` is a plain varchar(36), not a relationship,
-        // so it can point at the grant before that row is written. That is what
-        // breaks the cycle between `accounts` and `account_access_grants` and
-        // lets registration be three inserts with no follow-up update.
+        // A plain varchar(36), not a relationship, so it can point at the grant
+        // before that row exists. That breaks the cycle between the two tables
+        // and makes registration three inserts with no follow-up update.
         current_access_grant_id: ids.grantId,
       },
       permissions: readableByOwner,
@@ -191,10 +206,8 @@ function buildRows(args: {
 /* -------------------------------------------------------------------------- */
 
 /**
- * `transaction` — require Appwrite's TablesDB transactions.
- * `compensation` — always use explicit undo.
- * `auto` (default) — prefer transactions, fall back once if they are
- *   unavailable on the target Appwrite version.
+ * `auto` (default) prefers transactions and falls back once if the target
+ * Appwrite version has none; `transaction` and `compensation` pin one.
  */
 type Strategy = 'auto' | 'transaction' | 'compensation'
 
@@ -216,8 +229,7 @@ async function writeRows(input: ProvisionInput, rows: RowPlan[]): Promise<void> 
     return await writeInTransaction(input, rows)
   } catch (error) {
     if (strategy === 'transaction' || isConflict(error)) throw error
-    // The transaction was rolled back, so nothing was persisted and retrying
-    // with a different strategy is safe.
+    // Rolled back, so nothing was persisted and retrying is safe.
     input.logger.error(
       `transactional provisioning failed (${describe(error)}); retrying with compensating writes`,
     )
@@ -252,8 +264,8 @@ async function writeInTransaction(input: ProvisionInput, rows: RowPlan[]): Promi
     await tablesDB
       .updateTransaction({ transactionId: transaction.$id, rollback: true })
       .catch((rollbackError: unknown) => {
-        // The transaction expires on its own after `ttl`, so a failed rollback
-        // still cannot leak half-written records.
+        // The transaction expires after its ttl anyway, so a failed rollback
+        // still cannot leak half-written rows.
         input.logger.error(
           `rollback of transaction ${transaction.$id} failed: ${describe(rollbackError)}`,
         )
@@ -263,9 +275,38 @@ async function writeInTransaction(input: ProvisionInput, rows: RowPlan[]): Promi
 }
 
 /**
- * Used when the Appwrite deployment has no transaction support. Every
- * successful write is paired with an undo that runs, in reverse, on failure —
- * so the observable outcome is still all-or-nothing.
+ * Fills in whichever rows are missing, treating a conflict as already done.
+ *
+ * Only reached when an earlier run left a grant without its profile. A
+ * transaction is the wrong tool: there is nothing to roll back to, since the
+ * half-written state already exists. Every id is derived, so a row that is
+ * there is the row this would have written. Failing part-way leaves the same
+ * recoverable state it started from.
+ */
+async function fillMissingRows(input: ProvisionInput, rows: RowPlan[]): Promise<void> {
+  const { tablesDB, databaseId, logger } = input
+
+  for (const row of rows) {
+    try {
+      await tablesDB.createRow({
+        databaseId,
+        tableId: row.tableId,
+        rowId: row.rowId,
+        data: row.data,
+        permissions: row.permissions,
+      })
+      logger.log(`repaired missing row ${row.tableId}/${row.rowId}`)
+    } catch (error) {
+      if (!isConflict(error)) throw error
+    }
+  }
+}
+
+/**
+ * For deployments without transaction support. Every successful write is
+ * remembered and a failure undoes all of them, so the outcome is still
+ * all-or-nothing. `deleteAll` picks the order, because the platform decides
+ * which row can go first.
  */
 async function writeWithCompensation(input: ProvisionInput, rows: RowPlan[]): Promise<void> {
   const { tablesDB, databaseId } = input
@@ -289,18 +330,12 @@ async function writeWithCompensation(input: ProvisionInput, rows: RowPlan[]): Pr
 }
 
 /**
- * Removes rows whose relationships constrain the order they can go in.
- *
- * A fixed order is not enough. Appwrite enforces `restrict` on the many-to-one
- * grant — the account cannot go while a grant points at it — but a one-to-one
- * relationship behaves differently: `personal_accounts` cannot be deleted while
- * its account exists, and deleting the account detaches it instead of blocking.
- * The two rules pull in opposite directions, and which applies depends on the
- * Appwrite version.
- *
- * Rather than encode that, this retries whatever failed until a pass makes no
- * progress. It converges for any ordering the platform imposes, and reports
- * precisely what is left when it cannot.
+ * A fixed delete order is not enough. Appwrite enforces `restrict` on the
+ * many-to-one grant, so the account cannot go while a grant points at it; but
+ * one-to-one behaves the other way round, and `personal_accounts` cannot go
+ * while its account exists. The two rules pull in opposite directions and which
+ * applies depends on the version, so this retries until a pass makes no
+ * progress and reports whatever is left.
  */
 async function deleteAll(
   input: ProvisionInput,
@@ -320,7 +355,7 @@ async function deleteAll(
       }
     }
 
-    // No progress this pass means nothing further will unblock.
+    // No progress means nothing further will unblock.
     if (failed.length === remaining.length) break
     remaining = failed
   }
@@ -338,11 +373,8 @@ async function deleteAll(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Finds the caller's current access grant.
- *
- * Served by `ix_grants_user_access (appwrite_user_id, revoked_at)`. Ordered by
- * creation time so that, were duplicates ever to exist, the original always
- * wins and the answer stays stable between calls.
+ * Served by ix_grants_user_access. Ordered by creation time so that if
+ * duplicates ever existed the original wins and the answer stays stable.
  */
 async function findActiveGrant(
   tablesDB: TablesDB,
@@ -363,18 +395,87 @@ async function findActiveGrant(
   return result.rows[0] ?? null
 }
 
-/**
- * Re-reads the grant after losing a write race. The winner commits at roughly
- * the same moment, so a couple of short retries cover the gap.
- */
-async function waitForGrant(
+/** Same index as the active-grant lookup, read from the other end. */
+async function hasRevokedGrant(
   tablesDB: TablesDB,
   databaseId: string,
   appwriteUserId: string,
-): Promise<AccountAccessGrantRow | null> {
+): Promise<boolean> {
+  const result = await tablesDB.listRows<AccountAccessGrantRow>({
+    databaseId,
+    tableId: TABLE.accountAccessGrants,
+    queries: [
+      Query.equal('appwrite_user_id', appwriteUserId),
+      Query.isNotNull('revoked_at'),
+      Query.limit(1),
+    ],
+  })
+
+  return result.rows.length > 0
+}
+
+/** The row that completes an Account. */
+async function findPersonalAccount(
+  tablesDB: TablesDB,
+  databaseId: string,
+  accountId: string,
+): Promise<PersonalAccountRow | null> {
+  const result = await tablesDB.listRows<PersonalAccountRow>({
+    databaseId,
+    tableId: TABLE.personalAccounts,
+    queries: [Query.equal('account_id', accountId), Query.limit(1)],
+  })
+
+  return result.rows[0] ?? null
+}
+
+type ExistingRecords = {
+  grant: AccountAccessGrantRow | null
+  accountId: string | null
+  personalAccount: PersonalAccountRow | null
+}
+
+/** What this user already has: the grant, and the profile it leads to. */
+async function readExisting(
+  tablesDB: TablesDB,
+  databaseId: string,
+  appwriteUserId: string,
+): Promise<ExistingRecords> {
+  const grant = await findActiveGrant(tablesDB, databaseId, appwriteUserId)
+  const accountId = grant ? relatedId(grant.account_id) : null
+  const personalAccount = accountId
+    ? await findPersonalAccount(tablesDB, databaseId, accountId)
+    : null
+
+  return { grant, accountId, personalAccount }
+}
+
+/** The response for an existing set of rows, or `null` if incomplete. */
+function completedFrom(
+  existing: ExistingRecords,
+  ids: ReturnType<typeof registrationRowIds>,
+): ProvisionResult | null {
+  if (!existing.grant || !existing.personalAccount) return null
+
+  return {
+    ok: true,
+    created: false,
+    accountId: existing.accountId ?? ids.accountId,
+    grantId: existing.grant.$id,
+    personalAccountId: existing.personalAccount.$id,
+  }
+}
+
+/** The winner commits at roughly the same moment, so short retries cover it. */
+async function waitForCompletion(
+  tablesDB: TablesDB,
+  databaseId: string,
+  appwriteUserId: string,
+  ids: ReturnType<typeof registrationRowIds>,
+): Promise<ProvisionResult | null> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const grant = await findActiveGrant(tablesDB, databaseId, appwriteUserId)
-    if (grant) return grant
+    const done = completedFrom(await readExisting(tablesDB, databaseId, appwriteUserId), ids)
+    if (done) return done
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
   return null
@@ -395,7 +496,7 @@ async function findRoleId(
   return result.rows[0]?.$id ?? null
 }
 
-/** Reads the profile registration stored on the Appwrite Auth user. */
+/** The profile registration stored on the Auth user. */
 async function recoverProfile(input: ProvisionInput): Promise<PersonalProfile | null> {
   try {
     const prefs = await input.users.getPrefs({ userId: input.appwriteUserId })
