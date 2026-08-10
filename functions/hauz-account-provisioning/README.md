@@ -18,9 +18,9 @@ an account status.
   "profile": {
     "firstName": "Ada",
     "lastName": "Lovelace",
-    "role": "consumer",          // "consumer" | "realtor"
-    "contactPhone": "+998901234567" // or null
-  }
+    "role": "consumer", // "consumer" | "realtor"
+    "contactPhone": "+998901234567", // or null
+  },
 }
 ```
 
@@ -31,7 +31,8 @@ is then recovered from the Auth user's preferences.
 // 200
 { "ok": true, "created": true, "accountId": "…", "grantId": "…", "personalAccountId": "…" }
 
-// 401 unauthenticated · 400 invalid_request · 422 missing_profile
+// 400 invalid_request · 401 unauthenticated · 403 access_revoked
+// 405 invalid_request (anything but POST) · 422 missing_profile
 // 500 role_not_found · 500 provisioning_failed
 { "ok": false, "code": "…", "message": "…" }
 ```
@@ -50,32 +51,39 @@ The dynamic API key in `x-appwrite-key`, scoped in the Appwrite console. Nothing
 
 ## Settings
 
-| Setting | Value |
-| --- | --- |
-| Runtime | `node-22` |
-| Entrypoint | `dist/main.js` |
-| Build command | `npm install && npm run build` |
-| Execute access | `users` |
-| Scopes | `users.read`, `databases.read`, `tables.read`, `rows.read`, `rows.write` |
-| Timeout | 30s |
+| Setting        | Value                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| Runtime        | `node-22`                                                                |
+| Entrypoint     | `dist/main.js`                                                           |
+| Build command  | `npm install && npm run build`                                           |
+| Execute access | `users`                                                                  |
+| Scopes         | `users.read`, `databases.read`, `tables.read`, `rows.read`, `rows.write` |
+| Timeout        | 30s                                                                      |
 
-| Environment variable | Default | Purpose |
-| --- | --- | --- |
-| `APPWRITE_DATABASE_ID` | `hauz` | Database holding the HAUZ tables |
-| `HAUZ_PROVISIONING_STRATEGY` | `auto` | `auto`, `transaction` or `compensation` |
+| Environment variable         | Default | Purpose                                 |
+| ---------------------------- | ------- | --------------------------------------- |
+| `APPWRITE_DATABASE_ID`       | `hauz`  | Database holding the HAUZ tables        |
+| `HAUZ_PROVISIONING_STRATEGY` | `auto`  | `auto`, `transaction` or `compensation` |
 
 `APPWRITE_FUNCTION_API_ENDPOINT` and `APPWRITE_FUNCTION_PROJECT_ID` are injected by Appwrite.
 
 ## Guarantees
 
 **Atomic.** The three inserts run in one TablesDB transaction; any failure rolls back. Where
-transactions are unavailable, each write is paired with a compensating delete that runs in reverse
-order, so the outcome is still all-or-nothing.
+transactions are unavailable, every successful write is undone on failure, so the outcome is still
+all-or-nothing. The undo retries until a pass makes no progress rather than assuming a delete order,
+because Appwrite enforces `restrict` differently for one-to-one and many-to-one relationships.
 
-**Idempotent under concurrency.** An unrevoked grant for the caller short-circuits the whole
-function. Racing requests are caught by the primary key: the three row ids are UUIDv5 values derived
-from the Auth user id, so two concurrent runs compute the same keys and only one can win. The loser
-reads back the winner's records and reports success.
+**Idempotent under concurrency.** An unrevoked grant with a `personal_accounts` row behind it
+short-circuits the whole function — both, because a grant on its own is what a cleanup that could
+not finish leaves behind, and reporting that as "done" would disagree with what the application can
+read. Racing requests are caught by the primary key: the three row ids are UUIDv5 values derived from
+the Auth user id, so two concurrent runs compute the same keys and only one can win. The loser reads
+back the winner's records and reports success.
+
+**Self-repairing.** A grant left without its profile is completed on the next call rather than
+reported as finished. A grant that was deliberately revoked is not: re-granting access is an operator
+decision, so that case returns `access_revoked` instead.
 
 ## Development
 
