@@ -12,7 +12,7 @@
       "entrypoint": "dist/main.js",
       "commands": "npm install && npm run build",
       "path": "functions/hauz-account-provisioning",
-      "specification": "s-0.5vcpu-512mb",
+      "runtimeSpecification": "s-0.5vcpu-512mb",
       "timeout": 30,
       "execute": ["users"],
       "events": [],

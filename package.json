@@ -16,7 +16,7 @@
     "check:shared": "tsx scripts/sync-shared.ts --check",
     "build:function": "npm --prefix functions/hauz-account-provisioning run build",
     "typecheck:function": "npm --prefix functions/hauz-account-provisioning run typecheck",
-    "deploy:function": "npm run sync:shared && appwrite push function",
+    "deploy:function": "npm run sync:shared && node -r dotenv/config node_modules/appwrite-cli/dist/cli.cjs push function",
     "generate-routes": "tsr generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
@@ -54,11 +54,5 @@
     "tsx": "^4.23.11",
     "typescript": "^6.0.2",
     "vite": "^8.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss"
-    ]
   }
 }
